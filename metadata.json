@@ -1,0 +1,6 @@
+{
+  "name": "SetuHaul Freight Operations",
+  "description": "Freight operations and driver coordination platform for dock scheduling, delay reporting, and exception tracking",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
