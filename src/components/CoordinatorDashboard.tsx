@@ -21,6 +21,10 @@ import {
   ShieldCheck,
   Eye,
   Lock,
+  UserCheck,
+  UserX,
+  UserPlus,
+  FileText,
 } from 'lucide-react';
 import { CoordinatorDecisionModal } from './CoordinatorDecisionModal';
 import { Coordinator } from '../types';
@@ -42,9 +46,16 @@ export const CoordinatorDashboard: React.FC = () => {
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>('FAC-JAI-01');
   const [overview, setOverview] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'appointments' | 'queue' | 'exceptions' | 'docks' | 'coordinators'>('appointments');
+  const [activeTab, setActiveTab] = useState<'driver-approvals' | 'appointments' | 'queue' | 'exceptions' | 'docks' | 'coordinators'>('driver-approvals');
   const [selectedAppointmentForDecision, setSelectedAppointmentForDecision] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Driver approval & rejection states
+  const [approvingDriverId, setApprovingDriverId] = useState<string | null>(null);
+  const [rejectingDriverId, setRejectingDriverId] = useState<string | null>(null);
+  const [rejectModalDriver, setRejectModalDriver] = useState<any | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
+  const [driverActionNotification, setDriverActionNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Fetch facilities
   useEffect(() => {
@@ -71,6 +82,112 @@ export const CoordinatorDashboard: React.FC = () => {
       .then(data => setOverview(data))
       .catch(console.error)
       .finally(() => setIsLoading(false));
+  };
+
+  const handleApproveDriver = async (driverId: string, driverName: string) => {
+    setApprovingDriverId(driverId);
+    try {
+      const coordinatorId = profile?.id || 'COORD001';
+      const res = await fetch(`/api/coordinator/drivers/${driverId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          coordinatorId,
+          notes: 'Driver identity and vehicle documentation verified by operations.',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && (data.status === 'approved' || data.status === 'success')) {
+        setDriverActionNotification({
+          type: 'success',
+          message: `Driver ${driverName} (${driverId}) has been APPROVED! Dispatch has initialized an active shipment.`,
+        });
+        setTimeout(() => setDriverActionNotification(null), 6000);
+        fetchOverview();
+      } else {
+        setDriverActionNotification({
+          type: 'error',
+          message: data.message || 'Failed to approve driver registration.',
+        });
+      }
+    } catch (err: any) {
+      setDriverActionNotification({
+        type: 'error',
+        message: err.message || 'Network error approving driver.',
+      });
+    } finally {
+      setApprovingDriverId(null);
+    }
+  };
+
+  const handleApproveAllPending = async () => {
+    const pending = overview?.pending_drivers || [];
+    if (pending.length === 0) return;
+    const coordinatorId = profile?.id || 'COORD001';
+    try {
+      for (const d of pending) {
+        await fetch(`/api/coordinator/drivers/${d.driver_id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            coordinatorId,
+            notes: 'Batch verified and approved by warehouse operations coordinator.',
+          }),
+        });
+      }
+      setDriverActionNotification({
+        type: 'success',
+        message: `Successfully approved all ${pending.length} pending driver applications into active fleet!`,
+      });
+      setTimeout(() => setDriverActionNotification(null), 6000);
+      fetchOverview();
+    } catch (e: any) {
+      setDriverActionNotification({
+        type: 'error',
+        message: e.message || 'Error during batch approval.',
+      });
+    }
+  };
+
+  const handleRejectDriver = async () => {
+    if (!rejectModalDriver) return;
+    const driverId = rejectModalDriver.driver_id;
+    const driverName = rejectModalDriver.driver_name;
+    setRejectingDriverId(driverId);
+    try {
+      const coordinatorId = profile?.id || 'COORD001';
+      const res = await fetch(`/api/coordinator/drivers/${driverId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          coordinatorId,
+          reason: rejectionReasonInput || 'Vehicle registration documentation could not be authenticated.',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && (data.status === 'rejected' || data.status === 'success')) {
+        setDriverActionNotification({
+          type: 'success',
+          message: `Driver ${driverName} (${driverId}) registration was REJECTED.`,
+        });
+        setTimeout(() => setDriverActionNotification(null), 6000);
+        setRejectModalDriver(null);
+        setRejectionReasonInput('');
+        fetchOverview();
+      } else {
+        setDriverActionNotification({
+          type: 'error',
+          message: data.message || 'Failed to reject driver.',
+        });
+      }
+    } catch (err: any) {
+      setDriverActionNotification({
+        type: 'error',
+        message: err.message || 'Network error rejecting driver.',
+      });
+    } finally {
+      setRejectingDriverId(null);
+    }
   };
 
   useEffect(() => {
@@ -184,62 +301,102 @@ export const CoordinatorDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Driver Action Notification Banner */}
+      {driverActionNotification && (
+        <div
+          className={`p-4 rounded-2xl border text-xs flex items-center justify-between shadow-lg transition-all animate-fade-in ${
+            driverActionNotification.type === 'success'
+              ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200'
+              : 'bg-rose-950/80 border-rose-500/50 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {driverActionNotification.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+            )}
+            <span className="font-medium">{driverActionNotification.message}</span>
+          </div>
+          <button
+            onClick={() => setDriverActionNotification(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Pending Confirmations KPI */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-lg flex items-center justify-between">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
+        {/* Pending Driver Registrations KPI */}
+        <div className="bg-slate-900/90 border border-amber-500/40 rounded-2xl p-4 shadow-lg flex items-center justify-between bg-gradient-to-br from-slate-900 to-amber-950/30">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Pending Requests</span>
-            <div className="text-2xl font-bold text-amber-400 mt-1">
+            <span className="text-xs text-amber-400/90 font-medium">Pending Drivers</span>
+            <div className="text-2xl font-bold text-amber-300 mt-1">
+              {overview?.pending_drivers?.length || 0}
+            </div>
+            <span className="text-[11px] text-slate-400">Awaiting Sign-off</span>
+          </div>
+          <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+            <UserPlus className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Pending Confirmations KPI */}
+        <div className="bg-slate-900/90 border border-blue-500/30 rounded-2xl p-4 shadow-lg flex items-center justify-between bg-gradient-to-br from-slate-900 to-blue-950/20">
+          <div>
+            <span className="text-xs text-blue-400/90 font-medium">Pending Docks</span>
+            <div className="text-2xl font-bold text-blue-300 mt-1">
               {pendingAppointments.length}
             </div>
-            <span className="text-[11px] text-slate-500">Requires Coordinator Sign-off</span>
+            <span className="text-[11px] text-slate-400">Slot Requests</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
             <Clock className="w-5 h-5" />
           </div>
         </div>
 
         {/* Confirmed Appointments KPI */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-lg flex items-center justify-between">
+        <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-4 shadow-lg flex items-center justify-between bg-gradient-to-br from-slate-900 to-emerald-950/20">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Active Bookings</span>
-            <div className="text-2xl font-bold text-emerald-400 mt-1">
+            <span className="text-xs text-emerald-400/90 font-medium">Active Bookings</span>
+            <div className="text-2xl font-bold text-emerald-300 mt-1">
               {overview?.appointments?.filter((a: any) => a.appointment_status === 'CONFIRMED')?.length || 0}
             </div>
-            <span className="text-[11px] text-slate-500">Approved for today</span>
+            <span className="text-[11px] text-slate-400">Approved for today</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
             <Calendar className="w-5 h-5" />
           </div>
         </div>
 
         {/* Assigned Coordinators KPI */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-lg flex items-center justify-between">
+        <div className="bg-slate-900/90 border border-cyan-500/30 rounded-2xl p-4 shadow-lg flex items-center justify-between bg-gradient-to-br from-slate-900 to-cyan-950/20">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Facility Coordinators</span>
-            <div className="text-2xl font-bold text-cyan-400 mt-1">
+            <span className="text-xs text-cyan-400/90 font-medium">Coordinators</span>
+            <div className="text-2xl font-bold text-cyan-300 mt-1">
               {activeCoordinators.length}
             </div>
-            <span className="text-[11px] text-slate-500">
+            <span className="text-[11px] text-slate-400">
               {activeCoordinators.filter(c => c.status === 'ON_DUTY').length} On Duty Now
             </span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
             <Users className="w-5 h-5" />
           </div>
         </div>
 
         {/* Active Exceptions KPI */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-lg flex items-center justify-between">
+        <div className="bg-slate-900/90 border border-rose-500/30 rounded-2xl p-4 shadow-lg flex items-center justify-between bg-gradient-to-br from-slate-900 to-rose-950/20">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Open Exceptions</span>
-            <div className="text-2xl font-bold text-rose-400 mt-1">
+            <span className="text-xs text-rose-400/90 font-medium">Open Exceptions</span>
+            <div className="text-2xl font-bold text-rose-300 mt-1">
               {overview?.exceptions?.length || 0}
             </div>
-            <span className="text-[11px] text-slate-500">Delays / Breakdowns</span>
+            <span className="text-[11px] text-slate-400">Delays / Breakdowns</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+          <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400">
             <AlertTriangle className="w-5 h-5" />
           </div>
         </div>
@@ -251,12 +408,32 @@ export const CoordinatorDashboard: React.FC = () => {
         <div className="p-4 border-b border-slate-800 bg-slate-950/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 overflow-x-auto">
             <button
+              id="subtab-driver-approvals"
+              onClick={() => setActiveTab('driver-approvals')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
+                activeTab === 'driver-approvals'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30 border border-amber-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>
+                Driver Approvals ({overview?.pending_drivers?.length || 0})
+              </span>
+              {(overview?.pending_drivers?.length || 0) > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-bold animate-pulse">
+                  Review
+                </span>
+              )}
+            </button>
+
+            <button
               id="subtab-appointments"
               onClick={() => setActiveTab('appointments')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === 'appointments'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 border border-blue-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
             >
               <Calendar className="w-3.5 h-3.5" />
@@ -275,12 +452,12 @@ export const CoordinatorDashboard: React.FC = () => {
               onClick={() => setActiveTab('coordinators')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === 'coordinators'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Coordinators Directory ({activeCoordinators.length})</span>
+              <span>Coordinators ({activeCoordinators.length})</span>
             </button>
 
             <button
@@ -288,8 +465,8 @@ export const CoordinatorDashboard: React.FC = () => {
               onClick={() => setActiveTab('queue')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === 'queue'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                  ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 border border-cyan-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
             >
               <Truck className="w-3.5 h-3.5" />
@@ -301,8 +478,8 @@ export const CoordinatorDashboard: React.FC = () => {
               onClick={() => setActiveTab('exceptions')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === 'exceptions'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                  ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 border border-rose-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
             >
               <AlertTriangle className="w-3.5 h-3.5" />
@@ -314,8 +491,8 @@ export const CoordinatorDashboard: React.FC = () => {
               onClick={() => setActiveTab('docks')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === 'docks'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
             >
               <Wrench className="w-3.5 h-3.5" />
@@ -334,6 +511,214 @@ export const CoordinatorDashboard: React.FC = () => {
             />
           </div>
         </div>
+
+        {/* Tab 0: Driver Approvals & Registration Verification Queue */}
+        {activeTab === 'driver-approvals' && (
+          <div className="p-4 space-y-5">
+            {/* Header info card */}
+            <div className="p-4 bg-slate-950/80 border border-amber-500/30 rounded-xl space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                    <UserCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100">Driver Directory & Compliance Security Gateway</h3>
+                    <p className="text-xs text-slate-400">
+                      Total Registered Drivers in Database: <strong className="text-cyan-400 font-mono">{((overview?.approved_drivers?.length || 0) + (overview?.pending_drivers?.length || 0))} Drivers</strong> ({overview?.approved_drivers?.length || 0} Approved Fleet + {overview?.pending_drivers?.length || 0} Pending Applications)
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-mono font-bold border border-amber-500/40">
+                  {overview?.pending_drivers?.length || 0} Pending Approvals
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800/80 pt-2">
+                <strong>Operational Policy:</strong> Newly registered drivers are quarantined in <strong>PENDING</strong> status. The AI assistant welcomes the driver and notifies them that their registration is being processed by the facility coordinator. Once you click <strong>Approve</strong>, their account is activated and an operational shipment is dispatched.
+              </p>
+            </div>
+
+            {/* Pending Drivers Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Pending Driver Applications ({overview?.pending_drivers?.length || 0})</span>
+                </h4>
+                {(overview?.pending_drivers?.length || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleApproveAllPending}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Approve All Pending ({overview?.pending_drivers?.length})</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-800">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950/80 text-slate-400 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                    <tr>
+                      <th className="py-3 px-4">Driver Profile</th>
+                      <th className="py-3 px-4">Contact Info</th>
+                      <th className="py-3 px-4">Assigned Vehicle Plate</th>
+                      <th className="py-3 px-4">Registration Date</th>
+                      <th className="py-3 px-4">Gate & Chatbot Status</th>
+                      <th className="py-3 px-4 text-right">Verification Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                    {overview?.pending_drivers
+                      ?.filter((d: any) =>
+                        !searchTerm ||
+                        d.driver_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        d.driver_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        d.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        d.vehicle_registration?.toLowerCase().includes(searchTerm.toLowerCase())
+                      )
+                      ?.map((d: any) => (
+                        <tr key={d.driver_id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center font-bold text-xs">
+                                {d.driver_name?.substring(0, 2).toUpperCase() || 'DR'}
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-100 block">{d.driver_name}</span>
+                                <span className="text-[10px] text-amber-400 font-mono font-bold bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-800/50">
+                                  {d.driver_id}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-1.5 text-slate-300">
+                                <Mail className="w-3 h-3 text-slate-500" />
+                                <span className="font-mono text-[11px]">{d.email}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-slate-400">
+                                <Phone className="w-3 h-3 text-slate-500" />
+                                <span>{d.phone || '+91 98765 00000'}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="w-4 h-4 text-cyan-400" />
+                              <span className="font-mono font-bold text-cyan-300 bg-cyan-950/50 px-2 py-0.5 rounded border border-cyan-800/40 text-xs">
+                                {d.vehicle_registration || 'Pending Submission'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-400 text-[11px] font-mono">
+                            {d.registered_at ? new Date(d.registered_at).toLocaleDateString() : 'Today'}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                <Clock className="w-2.5 h-2.5 animate-pulse" />
+                                PENDING REVIEW
+                              </span>
+                              <div className="text-[10px] text-slate-500">
+                                Chatbot active with coordinator notice
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                id={`btn-approve-driver-${d.driver_id}`}
+                                disabled={approvingDriverId === d.driver_id}
+                                onClick={() => handleApproveDriver(d.driver_id, d.driver_name)}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all disabled:opacity-50"
+                              >
+                                {approvingDriverId === d.driver_id ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                )}
+                                <span>Approve</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                id={`btn-reject-driver-${d.driver_id}`}
+                                onClick={() => {
+                                  setRejectModalDriver(d);
+                                  setRejectionReasonInput('Vehicle credentials could not be verified.');
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 border border-slate-700 transition-colors text-xs flex items-center gap-1"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Reject</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+
+                    {(!overview?.pending_drivers || overview.pending_drivers.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="text-center py-10 text-slate-400">
+                          <CheckCircle2 className="w-8 h-8 text-emerald-500/60 mx-auto mb-2" />
+                          <p className="font-semibold text-slate-200">No Pending Driver Registrations</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            All registered drivers have been verified by facility operations.
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Approved Drivers Reference List */}
+            <div className="space-y-3 pt-4 border-t border-slate-800/80">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Approved Fleet Drivers ({overview?.approved_drivers?.length || 0})</span>
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {overview?.approved_drivers
+                  ?.filter((d: any) =>
+                    !searchTerm ||
+                    d.driver_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    d.driver_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    d.vehicle_registration?.toLowerCase().includes(searchTerm.toLowerCase())
+                  )
+                  ?.map((d: any) => (
+                    <div
+                      key={d.driver_id}
+                      className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <div className="truncate">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5 truncate">
+                          <span>{d.driver_name}</span>
+                          <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                            {d.driver_id}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-cyan-400 font-mono mt-0.5">
+                          {d.vehicle_registration || 'Fleet Vehicle'}
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex-shrink-0">
+                        APPROVED
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tab 1: Appointments & Schedule (with Coordinator Review Actions) */}
         {activeTab === 'appointments' && (
@@ -753,6 +1138,78 @@ export const CoordinatorDashboard: React.FC = () => {
           fetchOverview();
         }}
       />
+
+      {/* Driver Registration Rejection Reason Modal */}
+      {rejectModalDriver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-750 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-400">
+                <XCircle className="w-5 h-5" />
+                <h3 className="font-bold text-sm text-slate-100">Reject Driver Registration</h3>
+              </div>
+              <button
+                onClick={() => setRejectModalDriver(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Driver:</span>
+                <span className="font-bold text-slate-200">{rejectModalDriver.driver_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Driver ID:</span>
+                <span className="font-mono text-cyan-300">{rejectModalDriver.driver_id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Vehicle:</span>
+                <span className="font-mono text-slate-300">{rejectModalDriver.vehicle_registration || 'None'}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Rejection Reason (will be logged in security audit):
+              </label>
+              <textarea
+                value={rejectionReasonInput}
+                onChange={e => setRejectionReasonInput(e.target.value)}
+                rows={3}
+                placeholder="Specify reason (e.g. Invalid commercial vehicle registration or lack of carrier insurance)..."
+                className="w-full bg-slate-950 border border-slate-750 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRejectModalDriver(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-driver-rejection"
+                disabled={rejectingDriverId === rejectModalDriver.driver_id}
+                onClick={handleRejectDriver}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {rejectingDriverId === rejectModalDriver.driver_id ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5" />
+                )}
+                <span>Confirm Rejection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

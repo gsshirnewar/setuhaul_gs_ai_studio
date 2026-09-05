@@ -25,6 +25,8 @@ Always call get_my_current_context first if you have not done so this session.
 
 If the result status is 'ready': one actionable shipment is resolved. Proceed.
 
+If the result status is 'pending_approval': the driver's registration is currently being processed and reviewed by the facility coordinator. Welcome the driver warmly, inform them that their registration and vehicle credentials are being processed by the coordinator, and that automated dock slot booking will be unlocked once approved. Do not attempt slot changes while pending approval.
+
 If the result status is 'needs_information': the driver has two active shipments. \
 Show the human-readable order references and destination facilities from the \
 'choices' list and ask which shipment they mean. Call \

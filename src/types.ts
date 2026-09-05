@@ -72,6 +72,12 @@ export interface Driver {
   licence_number: string;
   home_base_city: string;
   driver_status: 'ACTIVE' | 'OFF_DUTY' | 'SUSPENDED' | 'INACTIVE';
+  approval_status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  vehicle_registration?: string;
+  registered_at?: string;
+  approved_by?: string;
+  approved_at?: string;
+  rejection_reason?: string;
 }
 
 export interface Vehicle {

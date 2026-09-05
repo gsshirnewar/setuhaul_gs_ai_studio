@@ -13,6 +13,9 @@ export interface UserProfile {
   phone?: string;
   vehicleReg?: string; // for drivers
   facilityId?: string; // for coordinators
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvedBy?: string;
+  approvedAt?: string;
 }
 
 interface AuthContextType {
@@ -37,6 +40,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   signInDemo: (role: UserRole) => void;
   saveSupabaseKeys: (url: string, anonKey: string) => void;
+  checkApprovalStatus: (driverId?: string) => Promise<string | null>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -141,10 +146,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Find matching driver in our database
-  const findDatabaseDriver = (emailInput: string, passwordInput?: string) => {
+  // Find matching driver in our database (both seed list and dynamically registered drivers)
+  const findDatabaseDriver = async (emailInput: string, passwordInput?: string) => {
     const normalizedEmail = emailInput.trim().toLowerCase();
-    return INITIAL_DRIVERS.find(d => {
+    const seedMatch = INITIAL_DRIVERS.find(d => {
       const matchEmail = d.email?.toLowerCase() === normalizedEmail;
       if (!matchEmail) return false;
       if (passwordInput && d.password) {
@@ -152,6 +157,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return true;
     });
+    if (seedMatch) return seedMatch;
+
+    try {
+      const res = await fetch(`/api/driver/by-email/${encodeURIComponent(normalizedEmail)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.driver) {
+          if (passwordInput && data.driver.password && data.driver.password !== passwordInput) {
+            return null;
+          }
+          return data.driver;
+        }
+      }
+    } catch (e) {
+      // offline fallback
+    }
+    return null;
   };
 
   const signIn = async (email: string, password: string) => {
@@ -181,7 +203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Direct Database Driver Credentials Validation
-    const matchedDriver = findDatabaseDriver(normalizedEmail);
+    const matchedDriver = await findDatabaseDriver(normalizedEmail);
     if (matchedDriver) {
       if (matchedDriver.password && matchedDriver.password !== password) {
         return { error: new Error('Incorrect password. Please verify the password from the driver directory.') };
@@ -195,8 +217,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: 'driver',
         fullName: matchedDriver.driver_name,
         phone: matchedDriver.phone,
-        vehicleReg: vehicle.registration_number,
+        vehicleReg: matchedDriver.vehicle_registration || vehicle.registration_number,
+        approvalStatus: matchedDriver.approval_status || 'APPROVED',
       };
+
+      // Check for live status update from backend
+      try {
+        const statusResp = await fetch(`/api/driver/status/${matchedDriver.driver_id}`);
+        if (statusResp.ok) {
+          const statusData = await statusResp.json();
+          if (statusData.approval_status) {
+            driverProfile.approvalStatus = statusData.approval_status;
+            driverProfile.approvedBy = statusData.approved_by;
+            driverProfile.approvedAt = statusData.approved_at;
+          }
+        }
+      } catch (e) {
+        // fallback to memory
+      }
 
       setProfile(driverProfile);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(driverProfile));
@@ -216,6 +254,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName: `${matchedCoordinator.name} (${matchedCoordinator.role_title})`,
         phone: matchedCoordinator.phone,
         facilityId: matchedCoordinator.facility_id,
+        approvalStatus: 'APPROVED',
       };
       setProfile(coordProfile);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(coordProfile));
@@ -231,20 +270,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName: `${firstCoord.name} (${firstCoord.role_title})`,
         phone: firstCoord.phone,
         facilityId: firstCoord.facility_id,
+        approvalStatus: 'APPROVED',
       };
       setProfile(coordProfile);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(coordProfile));
       return { error: null };
     }
 
-    // 4. Any other custom email/password login (allow instant login)
+    // 4. Any other custom email/password login (allow instant login with registered driver check)
+    const customDriverId = 'DRV-' + Date.now().toString().slice(-4);
     const customProfile: UserProfile = {
-      id: 'usr-' + Date.now().toString().slice(-4),
+      id: customDriverId,
       email: normalizedEmail,
       role: 'driver',
       fullName: normalizedEmail.split('@')[0],
       phone: '+91 98000 00000',
       vehicleReg: 'MH-12-AB-1234',
+      approvalStatus: 'PENDING',
     };
     setProfile(customProfile);
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(customProfile));
@@ -264,6 +306,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     const client = getSupabaseClient();
     const normalizedEmail = email.trim().toLowerCase();
+    const isDriver = profileData.role === 'driver';
+    const newDriverId = isDriver ? `DRV-REG-${Date.now().toString().slice(-4)}` : `COORD-${Date.now().toString().slice(-4)}`;
+    const approvalStatus = isDriver ? 'PENDING' : 'APPROVED';
+
+    // Register driver with backend DataStore
+    if (isDriver) {
+      try {
+        await fetch('/api/driver/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driver_id: newDriverId,
+            driver_name: profileData.fullName,
+            email: normalizedEmail,
+            phone: profileData.phone,
+            vehicle_registration: profileData.vehicleReg || 'RJ14-PEND-01',
+            password,
+          }),
+        });
+      } catch (err) {
+        console.warn('Backend driver registration sync error:', err);
+      }
+    }
 
     // 1. Try Supabase Auth if client is available
     if (client) {
@@ -278,6 +343,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               phone: profileData.phone,
               vehicle_reg: profileData.vehicleReg,
               facility_id: profileData.facilityId,
+              approval_status: approvalStatus,
             },
           },
         });
@@ -285,7 +351,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!error && data.user) {
           setUser(data.user);
           setSession(data.session);
-          const userProf = buildProfileFromUser(data.user);
+          const userProf: UserProfile = {
+            ...buildProfileFromUser(data.user),
+            approvalStatus,
+          };
           setProfile(userProf);
           localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(userProf));
           return { error: null };
@@ -297,19 +366,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 2. Direct instant registration
     const newProfile: UserProfile = {
-      id: 'reg-' + Date.now().toString().slice(-4),
+      id: newDriverId,
       email: normalizedEmail,
       role: profileData.role,
       fullName: profileData.fullName || (profileData.role === 'driver' ? 'Freight Driver' : 'Hub Coordinator'),
       phone: profileData.phone || '+91 90000 00000',
       vehicleReg: profileData.vehicleReg || 'MH-12-AB-1234',
-      facilityId: profileData.facilityId || 'FAC001',
+      facilityId: profileData.facilityId || 'FAC-JAI-01',
+      approvalStatus,
     };
 
     setProfile(newProfile);
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(newProfile));
     return { error: null };
   };
+
+  const checkApprovalStatus = async (driverId?: string): Promise<string | null> => {
+    const idToCheck = driverId || profile?.id;
+    if (!idToCheck) return null;
+    try {
+      const resp = await fetch(`/api/driver/status/${idToCheck}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.approval_status) {
+          if (profile && profile.id === idToCheck && profile.approvalStatus !== data.approval_status) {
+            const updated: UserProfile = {
+              ...profile,
+              approvalStatus: data.approval_status,
+              approvedBy: data.approved_by,
+              approvedAt: data.approved_at,
+            };
+            setProfile(updated);
+            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(updated));
+          }
+          return data.approval_status;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return profile?.approvalStatus || null;
+  };
+
+  const refreshProfile = async () => {
+    if (profile?.id) {
+      await checkApprovalStatus(profile.id);
+    }
+  };
+
+  // Poll driver approval status in background if pending
+  useEffect(() => {
+    if (!profile || profile.role !== 'driver' || profile.approvalStatus !== 'PENDING') {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/driver/status/${profile.id}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.approval_status && data.approval_status !== 'PENDING') {
+            const updated: UserProfile = {
+              ...profile,
+              approvalStatus: data.approval_status,
+              approvedBy: data.approved_by,
+              approvedAt: data.approved_at,
+            };
+            setProfile(updated);
+            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(updated));
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [profile?.id, profile?.approvalStatus, profile?.role]);
 
   const signOut = async () => {
     const driverId = profile?.id;
@@ -393,6 +526,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         signInDemo,
         saveSupabaseKeys,
+        checkApprovalStatus,
+        refreshProfile,
       }}
     >
       {children}

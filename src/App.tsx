@@ -35,11 +35,12 @@ const AppContent: React.FC = () => {
   // 1. Initial Loading State
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
-        <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 mb-4 animate-pulse">
-          <Truck className="w-6 h-6" />
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-sky-100 to-indigo-50 flex flex-col items-center justify-center text-slate-600">
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-500 shadow-xl shadow-blue-500/25 border border-blue-300/40 flex items-center justify-center text-white mb-4 animate-pulse">
+          <Truck className="w-7 h-7" />
         </div>
-        <p className="text-xs font-medium text-slate-300">Initializing SetuHaul Platform...</p>
+        <p className="text-sm font-bold text-slate-800 tracking-tight">Initializing SetuHaul Platform...</p>
+        <p className="text-xs text-slate-500 mt-1 font-medium">Connecting deterministic dispatch services</p>
       </div>
     );
   }
@@ -53,7 +54,12 @@ const AppContent: React.FC = () => {
   // - Driver role: strictly Driver Chat (no Coordinator Dashboard)
   // - Coordinator role: strictly Coordinator Dashboard (no Driver Chat)
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white animate-fade-in">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white animate-fade-in relative overflow-x-hidden">
+      {/* Ambient illuminated background accents */}
+      <div className="absolute top-0 left-1/4 w-[500px] h-[350px] bg-blue-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/3 right-1/4 w-[500px] h-[350px] bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-10 left-1/3 w-[450px] h-[300px] bg-amber-500/5 rounded-full blur-[100px] pointer-events-none" />
+
       {/* Global Header */}
       <Header
         onReset={handleResetData}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Truck,
   Building2,
@@ -19,10 +19,17 @@ import {
   Users,
   Copy,
   Check,
+  CornerDownLeft,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { getSupabaseConfig } from '../lib/supabaseClient';
 import { INITIAL_DRIVERS, INITIAL_VEHICLES, INITIAL_COORDINATORS } from '../db/seedData';
+import {
+  validatePhoneNumber,
+  validateTruckRegistration,
+  validateEmail,
+  validateFullName,
+} from '../utils/sanitaryValidation';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -45,8 +52,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [vehicleReg, setVehicleReg] = useState('MH-12-AB-1234');
+  const [vehicleReg, setVehicleReg] = useState('');
   const [facilityId, setFacilityId] = useState('FAC001');
+
+  // Sanitary validation states
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [phoneValid, setPhoneValid] = useState(false);
+
+  const [vehicleRegError, setVehicleRegError] = useState<string | null>(null);
+  const [vehicleRegValid, setVehicleRegValid] = useState(false);
+
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailValid, setEmailValid] = useState(false);
+
+  const [fullNameError, setFullNameError] = useState<string | null>(null);
+  const [fullNameValid, setFullNameValid] = useState(false);
+
+  // Field input refs for sequential Enter key focus
+  const fullNameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const vehicleRegRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   // Direct Supabase config toggle
   const [customUrl, setCustomUrl] = useState('');
@@ -59,12 +86,163 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
+  const [liveDrivers, setLiveDrivers] = useState<any[]>(INITIAL_DRIVERS);
+
+  const fetchDrivers = () => {
+    fetch('/api/drivers?includePending=true')
+      .then(res => res.json())
+      .then(data => {
+        if (data.drivers && Array.isArray(data.drivers) && data.drivers.length > 0) {
+          setLiveDrivers(data.drivers);
+        }
+      })
+      .catch(console.error);
+  };
 
   useEffect(() => {
     const config = getSupabaseConfig();
     if (config.url) setCustomUrl(config.url);
     if (config.anonKey) setCustomAnonKey(config.anonKey);
+    if (isOpen) {
+      fetchDrivers();
+    }
   }, [isOpen]);
+
+  const clearValidationErrors = () => {
+    setPhoneError(null);
+    setVehicleRegError(null);
+    setEmailError(null);
+    setFullNameError(null);
+    setPhoneValid(false);
+    setVehicleRegValid(false);
+    setEmailValid(false);
+    setFullNameValid(false);
+    setErrorMsg(null);
+  };
+
+  const handleModeToggle = (newMode: 'signin' | 'signup') => {
+    setMode(newMode);
+    clearValidationErrors();
+    setSuccessMsg(null);
+    if (newMode === 'signup') {
+      setEmail('');
+      setPassword('');
+      setFullName('');
+      setPhone('');
+      setVehicleReg('');
+    }
+  };
+
+  const handleRoleToggle = (newRole: UserRole) => {
+    setRole(newRole);
+    clearValidationErrors();
+  };
+
+  // Field validation routines
+  const validatePhoneField = (val: string = phone): boolean => {
+    const res = validatePhoneNumber(val);
+    if (!res.isValid) {
+      setPhoneError(res.error);
+      setPhoneValid(false);
+      return false;
+    } else {
+      setPhoneError(null);
+      setPhoneValid(true);
+      if (res.formatted) {
+        setPhone(res.formatted);
+      }
+      return true;
+    }
+  };
+
+  const validateVehicleRegField = (val: string = vehicleReg): boolean => {
+    const res = validateTruckRegistration(val);
+    if (!res.isValid) {
+      setVehicleRegError(res.error);
+      setVehicleRegValid(false);
+      return false;
+    } else {
+      setVehicleRegError(null);
+      setVehicleRegValid(true);
+      if (res.cleaned) {
+        setVehicleReg(res.cleaned);
+      }
+      return true;
+    }
+  };
+
+  const validateEmailField = (val: string = email): boolean => {
+    const res = validateEmail(val);
+    if (!res.isValid) {
+      setEmailError(res.error);
+      setEmailValid(false);
+      return false;
+    } else {
+      setEmailError(null);
+      setEmailValid(true);
+      if (res.cleaned) {
+        setEmail(res.cleaned);
+      }
+      return true;
+    }
+  };
+
+  const validateFullNameField = (val: string = fullName): boolean => {
+    const res = validateFullName(val);
+    if (!res.isValid) {
+      setFullNameError(res.error);
+      setFullNameValid(false);
+      return false;
+    } else {
+      setFullNameError(null);
+      setFullNameValid(true);
+      return true;
+    }
+  };
+
+  // Enter key handlers
+  const handleFullNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const valid = validateFullNameField();
+      if (valid) {
+        if (role === 'driver') phoneRef.current?.focus();
+        else emailRef.current?.focus();
+      }
+    }
+  };
+
+  const handlePhoneKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const valid = validatePhoneField();
+      if (valid) {
+        vehicleRegRef.current?.focus();
+      }
+    }
+  };
+
+  const handleVehicleRegKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const valid = validateVehicleRegField();
+      if (valid) {
+        emailRef.current?.focus();
+      }
+    }
+  };
+
+  const handleEmailKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      if (mode === 'signup') {
+        e.preventDefault();
+        const valid = validateEmailField();
+        if (valid) {
+          passwordRef.current?.focus();
+        }
+      }
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -72,6 +250,44 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    // Validate registration fields if registering
+    if (mode === 'signup') {
+      let hasError = false;
+
+      if (!validateFullNameField()) {
+        hasError = true;
+      }
+
+      if (role === 'driver') {
+        if (!validatePhoneField()) {
+          hasError = true;
+        }
+        if (!validateVehicleRegField()) {
+          hasError = true;
+        }
+      }
+
+      if (!validateEmailField()) {
+        hasError = true;
+      }
+
+      if (!password || password.length < 6) {
+        setErrorMsg('Password must be at least 6 characters.');
+        passwordRef.current?.focus();
+        return;
+      }
+
+      if (hasError) {
+        setErrorMsg('Please correct the validation errors in the highlighted fields.');
+        if (fullNameError || !fullName) fullNameRef.current?.focus();
+        else if (role === 'driver' && (phoneError || !phone)) phoneRef.current?.focus();
+        else if (role === 'driver' && (vehicleRegError || !vehicleReg)) vehicleRegRef.current?.focus();
+        else if (emailError || !email) emailRef.current?.focus();
+        return;
+      }
+    }
+
     setIsLoading(true);
 
     try {
@@ -86,11 +302,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           }, 600);
         }
       } else {
-        const res = await signUp(email, password, {
+        const validatedPhone = role === 'driver' ? (validatePhoneNumber(phone).formatted || phone) : phone;
+        const validatedVehicle = role === 'driver' ? (validateTruckRegistration(vehicleReg).cleaned || vehicleReg) : undefined;
+        const validatedEmail = validateEmail(email).cleaned || email.trim();
+
+        const res = await signUp(validatedEmail, password, {
           role,
-          fullName: fullName || (role === 'driver' ? 'Freight Driver' : 'Facility Coordinator'),
-          phone,
-          vehicleReg: role === 'driver' ? vehicleReg : undefined,
+          fullName: fullName.trim() || (role === 'driver' ? 'Freight Driver' : 'Facility Coordinator'),
+          phone: validatedPhone,
+          vehicleReg: validatedVehicle,
           facilityId: role === 'coordinator' ? facilityId : undefined,
         });
 
@@ -130,14 +350,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }, 400);
   };
 
-  const handleSelectDriver = (d: typeof INITIAL_DRIVERS[0]) => {
+  const handleSelectDriver = (d: any) => {
     const veh = INITIAL_VEHICLES.find(v => v.carrier_id === d.carrier_id) || INITIAL_VEHICLES[0];
     setRole('driver');
     setEmail(d.email || `driver${d.driver_id.replace('DRV', '')}@gmail.com`);
     setPassword(d.password || `Password#Drv${d.driver_id.replace('DRV', '')}`);
     setFullName(d.driver_name);
-    setPhone(d.phone);
-    setVehicleReg(veh.registration_number);
+    setPhone(d.phone || '');
+    setVehicleReg(d.vehicle_registration || veh?.registration_number || '');
     setSuccessMsg(`Selected driver ${d.driver_name} (${d.driver_id})`);
     setTimeout(() => setSuccessMsg(null), 2500);
   };
@@ -154,16 +374,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+        <div className={`p-5 border-b border-slate-800 flex items-center justify-between transition-colors ${
+          role === 'driver' ? 'bg-gradient-to-r from-blue-950/40 via-slate-950/60 to-slate-950/60' : 'bg-slate-950/60'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center border transition-all ${
+              role === 'driver'
+                ? 'bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-500 shadow-md shadow-blue-600/30 border-blue-400/30 text-white'
+                : 'bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-md shadow-emerald-600/30 border-emerald-400/30 text-white'
+            }`}>
               {role === 'driver' ? <Truck className="w-5 h-5" /> : <Building2 className="w-5 h-5" />}
             </div>
             <div>
-              <h3 className="font-bold text-slate-100 text-base">
-                {mode === 'signin' ? 'Sign In' : 'Create Account'} • {role === 'driver' ? 'Driver' : 'Coordinator'}
+              <h3 className="font-bold text-slate-100 text-base flex items-center gap-2">
+                <span>{mode === 'signin' ? 'Sign In' : 'Create Account'}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                  role === 'driver'
+                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                }`}>
+                  {role === 'driver' ? 'Driver Portal' : 'Coordinator Portal'}
+                </span>
               </h3>
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5">
                 <span>Supabase Auth</span>
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                 <span className="text-[11px] text-emerald-400 font-medium">Instant Access Enabled</span>
@@ -186,47 +419,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="button"
               id="auth-role-driver"
               onClick={() => {
-                setRole('driver');
+                handleRoleToggle('driver');
                 setEmail('driver01@gmail.com');
                 setPassword('Password#Drv01');
               }}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all ${
                 role === 'driver'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25 border border-blue-400/40'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/30 border border-blue-400/40'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Truck className="w-4 h-4" />
+              <Truck className="w-4 h-4 text-cyan-300" />
               <span>Driver Portal</span>
             </button>
             <button
               type="button"
               id="auth-role-coordinator"
               onClick={() => {
-                setRole('coordinator');
+                handleRoleToggle('coordinator');
                 setEmail('vikram.joshi@setuhaul.com');
                 setPassword('Password#Coord01');
               }}
               className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all ${
                 role === 'coordinator'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25 border border-emerald-400/40'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-400/40'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Building2 className="w-4 h-4" />
+              <Building2 className="w-4 h-4 text-emerald-300" />
               <span>Coordinator Portal</span>
             </button>
           </div>
 
-          <div className={`p-2.5 rounded-xl border text-xs ${
+          <div className={`p-3 rounded-xl border text-xs transition-colors ${
             role === 'driver'
-              ? 'bg-blue-950/30 border-blue-800/40 text-blue-200'
-              : 'bg-emerald-950/30 border-emerald-800/40 text-emerald-200'
+              ? 'bg-gradient-to-r from-blue-950/50 via-indigo-950/30 to-slate-900/80 border-blue-500/30 text-blue-200'
+              : 'bg-gradient-to-r from-emerald-950/50 via-teal-950/30 to-slate-900/80 border-emerald-500/30 text-emerald-200'
           }`}>
-            <p className="text-[11px]">
+            <p className="text-[11px] leading-relaxed">
               {role === 'driver'
-                ? '🚚 Driver Portal Isolation: Grants access to Driver AI Dispatch Chat and appointments.'
-                : '🛡️ Coordinator Portal Isolation: Grants access to Yard Operations and Dock Scheduling.'}
+                ? '🚚 Driver Portal Isolation: Grants access to Driver AI Dispatch Chat, live slot negotiations, and gate permits.'
+                : '🛡️ Coordinator Portal Isolation: Grants access to Yard Operations, Dock Scheduling, and exception overrides.'}
             </p>
           </div>
 
@@ -235,10 +468,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               id="auth-mode-signin"
-              onClick={() => {
-                setMode('signin');
-                setErrorMsg(null);
-              }}
+              onClick={() => handleModeToggle('signin')}
               className={`pb-2.5 px-4 text-xs font-semibold border-b-2 transition-all ${
                 mode === 'signin'
                   ? role === 'driver' ? 'border-blue-500 text-blue-400' : 'border-emerald-500 text-emerald-400'
@@ -250,10 +480,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               id="auth-mode-signup"
-              onClick={() => {
-                setMode('signup');
-                setErrorMsg(null);
-              }}
+              onClick={() => handleModeToggle('signup')}
               className={`pb-2.5 px-4 text-xs font-semibold border-b-2 transition-all ${
                 mode === 'signup'
                   ? role === 'driver' ? 'border-blue-500 text-blue-400' : 'border-emerald-500 text-emerald-400'
@@ -266,17 +493,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           {/* Directory helper based on selected portal */}
           {role === 'driver' ? (
-            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+            <div className="bg-slate-950/80 border border-blue-900/30 rounded-xl p-3 shadow-sm">
               <button
                 type="button"
                 onClick={() => setShowDriverDirectory(!showDriverDirectory)}
                 className="flex items-center justify-between w-full text-left text-xs font-semibold text-slate-200"
               >
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-blue-400" />
-                  <span>Pre-Configured Drivers Directory (15 Drivers)</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="w-5 h-5 rounded-md bg-blue-500/20 flex items-center justify-center text-cyan-300">
+                    <Users className="w-3.5 h-3.5" />
+                  </div>
+                  <span>Driver Database Directory ({liveDrivers.length} Drivers)</span>
+                  {liveDrivers.some(d => d.approval_status === 'PENDING') && (
+                    <span className="text-[10px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-bold">
+                      {liveDrivers.filter(d => d.approval_status === 'PENDING').length} Pending
+                    </span>
+                  )}
                 </div>
-                <span className="text-[11px] text-blue-400 flex items-center gap-1">
+                <span className="text-[11px] text-cyan-400 flex items-center gap-1 font-medium">
                   {showDriverDirectory ? 'Hide' : 'View & Auto-Fill'}
                   {showDriverDirectory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </span>
@@ -284,24 +518,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               {showDriverDirectory && (
                 <div className="mt-3 space-y-2 max-h-48 overflow-y-auto pr-1">
-                  <p className="text-[11px] text-slate-400 leading-snug">
-                    Click any driver below to auto-fill their credentials into the form:
-                  </p>
-                  <div className="divide-y divide-slate-800/60 border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/60">
-                    {INITIAL_DRIVERS.map(d => (
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 leading-snug">
+                    <span>
+                      Click <strong className="text-blue-300">Auto-Fill</strong> on any driver to populate credentials:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={fetchDrivers}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 font-semibold underline"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="divide-y divide-slate-800/60 border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/70">
+                    {liveDrivers.map(d => (
                       <div
                         key={d.driver_id}
-                        className="p-2 flex items-center justify-between hover:bg-slate-800/60 transition-colors text-xs"
+                        className="p-2 flex items-center justify-between hover:bg-blue-950/30 transition-colors text-xs"
                       >
                         <div className="truncate mr-2">
-                          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                          <div className="font-semibold text-slate-200 flex items-center gap-1.5 flex-wrap">
                             <span>{d.driver_name}</span>
-                            <span className="text-[10px] px-1.5 py-0.2 bg-blue-900/50 text-blue-300 rounded font-mono">
+                            <span className="text-[10px] px-1.5 py-0.2 bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded font-mono font-medium">
                               {d.driver_id}
                             </span>
+                            {d.approval_status === 'PENDING' ? (
+                              <span className="text-[10px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-medium">
+                                Pending
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded font-medium">
+                                Approved
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono">
-                            {d.email} • {d.password}
+                            <span className="text-cyan-400/90">{d.email}</span> • {d.password}
+                            {d.vehicle_registration && (
+                              <span className="text-slate-500"> • {d.vehicle_registration}</span>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -316,7 +571,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleSelectDriver(d)}
-                            className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-medium"
+                            className="px-2 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded text-[11px] font-semibold"
                           >
                             Auto-Fill
                           </button>
@@ -496,46 +751,183 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <form onSubmit={handleSubmit} className="space-y-3.5">
             {mode === 'signup' && (
               <>
+                {/* Full Name */}
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Full Name</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-slate-300">Full Name</label>
+                    <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                      <CornerDownLeft className="w-3 h-3 text-slate-500" />
+                      <span>Press [Enter] to check</span>
+                    </span>
+                  </div>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
+                      ref={fullNameRef}
                       type="text"
                       required
                       placeholder={role === 'driver' ? 'Rajesh Kumar' : 'Operations Coordinator'}
                       value={fullName}
-                      onChange={e => setFullName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                      onChange={e => {
+                        setFullName(e.target.value);
+                        if (fullNameError) setFullNameError(null);
+                        setFullNameValid(false);
+                      }}
+                      onKeyDown={handleFullNameKeyDown}
+                      onBlur={() => {
+                        if (fullName.trim()) validateFullNameField();
+                      }}
+                      className={`w-full bg-slate-950 border rounded-xl pl-9 pr-9 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none transition-all ${
+                        fullNameError
+                          ? 'border-rose-500/80 bg-rose-950/20 focus:border-rose-500'
+                          : fullNameValid
+                          ? 'border-emerald-500/80 bg-emerald-950/20 focus:border-emerald-500'
+                          : 'border-slate-800 focus:border-blue-500'
+                      }`}
                     />
+                    {fullNameValid && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    )}
+                    {fullNameError && (
+                      <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    )}
                   </div>
+                  {fullNameError ? (
+                    <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                      <span>{fullNameError}</span>
+                    </p>
+                  ) : fullNameValid ? (
+                    <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                      <span>Full name verified</span>
+                    </p>
+                  ) : null}
                 </div>
 
                 {role === 'driver' ? (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-3">
+                    {/* Phone Number with +91 */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">Phone Number</label>
-                      <div className="relative">
-                        <Phone className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="tel"
-                          placeholder="+91 98765 43210"
-                          value={phone}
-                          onChange={e => setPhone(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                        />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-medium text-slate-300">Phone Number (India)</label>
+                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                          <CornerDownLeft className="w-3 h-3 text-slate-500" />
+                          <span>Press [Enter] to check</span>
+                        </span>
                       </div>
+                      <div className="relative flex rounded-xl shadow-xs">
+                        <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-800 bg-slate-900 text-slate-300 text-xs font-bold select-none font-mono">
+                          🇮🇳 +91
+                        </span>
+                        <div className="relative flex-1">
+                          <input
+                            ref={phoneRef}
+                            type="tel"
+                            placeholder="98765 43210"
+                            value={phone.replace(/^\+91\s*/, '')}
+                            onChange={e => {
+                              let val = e.target.value;
+                              if (val.startsWith('+91')) {
+                                val = val.slice(3).trim();
+                              }
+                              setPhone(val);
+                              if (phoneError) setPhoneError(null);
+                              setPhoneValid(false);
+                            }}
+                            onKeyDown={handlePhoneKeyDown}
+                            onBlur={() => {
+                              if (phone.trim()) validatePhoneField();
+                            }}
+                            className={`w-full bg-slate-950 border rounded-r-xl pr-9 py-2 pl-3 text-xs text-slate-100 font-mono placeholder-slate-600 focus:outline-none transition-all ${
+                              phoneError
+                                ? 'border-rose-500/80 bg-rose-950/20 focus:border-rose-500'
+                                : phoneValid
+                                ? 'border-emerald-500/80 bg-emerald-950/20 focus:border-emerald-500'
+                                : 'border-slate-800 focus:border-blue-500'
+                            }`}
+                          />
+                          {phoneValid && (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          )}
+                          {phoneError && (
+                            <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          )}
+                        </div>
+                      </div>
+                      {phoneError ? (
+                        <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                          <span>{phoneError}</span>
+                        </p>
+                      ) : phoneValid ? (
+                        <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                          <span>Valid Indian 10-digit mobile (+91 {phone.replace(/\D/g, '').slice(-10)})</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          10 digits without letters. Valid Indian numbers begin with 6, 7, 8, or 9.
+                        </p>
+                      )}
                     </div>
+
+                    {/* Truck Reg Plate */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">Truck Reg No.</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="MH-12-AB-1234"
-                        value={vehicleReg}
-                        onChange={e => setVehicleReg(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                      />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-medium text-slate-300">Truck Registration Plate</label>
+                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                          <CornerDownLeft className="w-3 h-3 text-slate-500" />
+                          <span>Press [Enter] to check</span>
+                        </span>
+                      </div>
+                      <div className="relative">
+                        <Truck className="w-4 h-4 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          ref={vehicleRegRef}
+                          type="text"
+                          required
+                          placeholder="RJ14GT4101"
+                          value={vehicleReg}
+                          onChange={e => {
+                            setVehicleReg(e.target.value.toUpperCase());
+                            if (vehicleRegError) setVehicleRegError(null);
+                            setVehicleRegValid(false);
+                          }}
+                          onKeyDown={handleVehicleRegKeyDown}
+                          onBlur={() => {
+                            if (vehicleReg.trim()) validateVehicleRegField();
+                          }}
+                          className={`w-full bg-slate-950 border rounded-xl pl-9 pr-9 py-2 text-xs text-blue-200 font-mono font-semibold placeholder-slate-600 focus:outline-none transition-all uppercase ${
+                            vehicleRegError
+                              ? 'border-rose-500/80 bg-rose-950/20 focus:border-rose-500'
+                              : vehicleRegValid
+                              ? 'border-emerald-500/80 bg-emerald-950/20 focus:border-emerald-500'
+                              : 'border-slate-800 focus:border-blue-500'
+                          }`}
+                        />
+                        {vehicleRegValid && (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        )}
+                        {vehicleRegError && (
+                          <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        )}
+                      </div>
+                      {vehicleRegError ? (
+                        <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                          <span>{vehicleRegError}</span>
+                        </p>
+                      ) : vehicleRegValid ? (
+                        <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                          <span>Valid Indian commercial plate ({vehicleReg})</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-slate-500 mt-1 font-mono">
+                          Format: ^[A-Z]&#123;2&#125;[0-9]&#123;1,2&#125;[A-Z]&#123;1,2&#125;[0-9]&#123;4&#125;$ (e.g. RJ14GT4101 or MH12AB1234)
+                        </p>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -555,32 +947,87 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </>
             )}
 
+            {/* Email Field */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Email Address</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-slate-300">
+                  {role === 'driver' ? 'Driver Email / Username' : 'Coordinator Work Email'}
+                </label>
+                {mode === 'signup' && (
+                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                    <CornerDownLeft className="w-3 h-3 text-slate-500" />
+                    <span>Press [Enter] to check</span>
+                  </span>
+                )}
+              </div>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
+                  role === 'driver' ? 'text-blue-400' : 'text-emerald-400'
+                }`} />
                 <input
+                  ref={emailRef}
                   type="email"
                   required
                   placeholder={role === 'driver' ? 'driver01@gmail.com' : 'coordinator@setuhaul.com'}
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                  onChange={e => {
+                    setEmail(e.target.value);
+                    if (emailError) setEmailError(null);
+                    setEmailValid(false);
+                  }}
+                  onKeyDown={handleEmailKeyDown}
+                  onBlur={() => {
+                    if (email.trim() && mode === 'signup') validateEmailField();
+                  }}
+                  className={`w-full bg-slate-950 border rounded-xl pl-9 pr-9 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none font-mono transition-all ${
+                    emailError
+                      ? 'border-rose-500/80 bg-rose-950/20 focus:border-rose-500 text-rose-200'
+                      : emailValid && mode === 'signup'
+                      ? 'border-emerald-500/80 bg-emerald-950/20 focus:border-emerald-500 text-emerald-200'
+                      : role === 'driver'
+                      ? 'border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40 text-blue-100'
+                      : 'border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 text-emerald-100'
+                  }`}
                 />
+                {emailValid && mode === 'signup' && (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                )}
+                {emailError && (
+                  <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                )}
               </div>
+              {emailError ? (
+                <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                  <span>{emailError}</span>
+                </p>
+              ) : emailValid && mode === 'signup' ? (
+                <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>Valid email address (.com / .in)</span>
+                </p>
+              ) : null}
             </div>
 
+            {/* Password Field */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Password</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Password</label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Lock className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
+                  role === 'driver' ? 'text-indigo-400' : 'text-teal-400'
+                }`} />
                 <input
+                  ref={passwordRef}
                   type="text"
                   required
-                  placeholder="Password#Drv01"
+                  placeholder={role === 'driver' ? 'Password#Drv01' : 'Password#Coord01'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                  className={`w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none font-mono transition-all ${
+                    role === 'driver'
+                      ? 'focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40 text-blue-100'
+                      : 'focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40 text-emerald-100'
+                  }`}
                 />
               </div>
             </div>
@@ -589,10 +1036,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="submit"
               id="btn-auth-submit"
               disabled={isLoading}
-              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
+              className={`w-full py-2.5 px-4 rounded-xl text-white text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 mt-2 ${
+                role === 'driver'
+                  ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 shadow-blue-600/30'
+                  : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 shadow-emerald-600/30'
+              }`}
             >
               {isLoading ? (
-                <span className="animate-pulse">Processing...</span>
+                <span className="animate-pulse flex items-center gap-2">
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Processing...</span>
+                </span>
               ) : mode === 'signin' ? (
                 <span>Sign In to {role === 'driver' ? 'Driver Portal' : 'Coordinator Dashboard'}</span>
               ) : (
@@ -611,12 +1065,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 type="button"
                 id="btn-quick-driver"
                 onClick={() => handleDemoLogin('driver')}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-left transition-colors flex items-center gap-2"
+                className="p-2.5 rounded-xl bg-gradient-to-r from-blue-950/80 to-indigo-950/80 hover:from-blue-900 hover:to-indigo-900 border border-blue-500/40 text-left transition-all flex items-center gap-2.5 shadow-sm shadow-blue-950/50 hover:border-blue-400"
               >
-                <Truck className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                <Truck className="w-4 h-4 text-cyan-400 flex-shrink-0" />
                 <div className="truncate">
-                  <div className="text-xs font-semibold text-slate-200 truncate">Demo Driver</div>
-                  <div className="text-[10px] text-slate-400">Truck MH-12</div>
+                  <div className="text-xs font-semibold text-blue-200 truncate">Demo Driver</div>
+                  <div className="text-[10px] text-cyan-400/80 font-mono">Truck RJ14</div>
                 </div>
               </button>
 
@@ -624,12 +1078,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 type="button"
                 id="btn-quick-coordinator"
                 onClick={() => handleDemoLogin('coordinator')}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-left transition-colors flex items-center gap-2"
+                className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/80 to-teal-950/80 hover:from-emerald-900 hover:to-teal-900 border border-emerald-500/40 text-left transition-all flex items-center gap-2.5 shadow-sm shadow-emerald-950/50 hover:border-emerald-400"
               >
                 <Building2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                 <div className="truncate">
-                  <div className="text-xs font-semibold text-slate-200 truncate">Demo Coordinator</div>
-                  <div className="text-[10px] text-slate-400">Bhiwandi Hub</div>
+                  <div className="text-xs font-semibold text-emerald-200 truncate">Demo Coordinator</div>
+                  <div className="text-[10px] text-emerald-400/80 font-mono">Bhiwandi Hub</div>
                 </div>
               </button>
             </div>

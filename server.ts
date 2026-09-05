@@ -6,6 +6,7 @@ import { db } from './src/db/dataStore';
 import { resolveDriverOperationalContext } from './src/domain/operations';
 import { confirmBooking } from './src/domain/booking';
 import { runAgentTurn } from './src/agent/agent';
+import { validatePhoneNumber, validateTruckRegistration, validateEmail } from './src/utils/sanitaryValidation';
 
 async function startServer() {
   const app = express();
@@ -19,12 +20,19 @@ async function startServer() {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
-  // Demo drivers metadata for Driver Selector UI
+  // Comprehensive drivers directory & metadata endpoint for Driver Selector and Directories
   app.get('/api/drivers', (req, res) => {
-    const drivers = db.getDrivers().map(d => {
+    const includePending = req.query.includePending !== 'false';
+    const sourceDrivers = includePending ? db.getAllDrivers() : db.getDrivers();
+
+    const drivers = sourceDrivers.map(d => {
       const activeShipments = db.getDriverActiveShipments(d.driver_id);
       let scenario = 'Standard delivery';
-      if (d.driver_id === 'DRV006') scenario = 'Traffic delay (SHP1006) — 10:00 slot missed';
+      if (d.approval_status === 'PENDING') {
+        scenario = 'Newly Registered — Awaiting Facility Verification & Slot Allocation';
+      } else if (d.approval_status === 'REJECTED') {
+        scenario = 'Registration Rejected — Requires Revised Credentials';
+      } else if (d.driver_id === 'DRV006') scenario = 'Traffic delay (SHP1006) — 10:00 slot missed';
       else if (d.driver_id === 'DRV012') scenario = 'Mechanical breakdown repaired (SHP1012)';
       else if (d.driver_id === 'DRV004') scenario = 'Ambiguous case (2 active shipments: ORD-004 & ORD-020)';
       else if (d.driver_id === 'DRV015') scenario = 'Reefer shipment with maintenance conflict (SHP1015)';
@@ -40,7 +48,16 @@ async function startServer() {
         scenario,
       };
     });
-    res.json({ drivers });
+
+    const pendingCount = db.getPendingDrivers().length;
+    const approvedCount = db.getDrivers().length;
+
+    res.json({
+      drivers,
+      total: drivers.length,
+      pending_count: pendingCount,
+      approved_count: approvedCount,
+    });
   });
 
   // Get driver context
@@ -77,6 +94,8 @@ async function startServer() {
         message: agentResponse.message,
         tool_calls: agentResponse.toolCalls,
         mode: agentResponse.mode,
+        guardrails: agentResponse.guardrails,
+        harness_report: agentResponse.harnessReport,
       });
     } catch (err: any) {
       console.error('Error handling chat:', err);
@@ -104,6 +123,123 @@ async function startServer() {
     res.json({ status: 'ok', message: 'Chat history cleared for driver session.' });
   });
 
+  // Driver Registration & Verification Endpoints
+  app.post('/api/driver/register', (req, res) => {
+    try {
+      const { driver_id, driver_name, fullName, name, email, phone, vehicle_registration, vehicleReg, password, home_base_city } = req.body;
+      const effectiveName = (driver_name || fullName || name || '').trim();
+      const effectiveVehicle = (vehicle_registration || vehicleReg || '').trim();
+
+      if (!email || !effectiveName) {
+        return res.status(400).json({ error: 'driver_name and email are required for registration.' });
+      }
+
+      // Sanitary check email
+      const emailCheck = validateEmail(email);
+      if (!emailCheck.isValid) {
+        return res.status(400).json({ error: emailCheck.error });
+      }
+
+      // Sanitary check phone if provided
+      let formattedPhone = phone;
+      if (phone) {
+        const phoneCheck = validatePhoneNumber(phone);
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ error: phoneCheck.error });
+        }
+        formattedPhone = phoneCheck.formatted || phone;
+      }
+
+      // Sanitary check truck registration if provided
+      let formattedVehicle = effectiveVehicle;
+      if (effectiveVehicle) {
+        const vehicleCheck = validateTruckRegistration(effectiveVehicle);
+        if (!vehicleCheck.isValid) {
+          return res.status(400).json({ error: vehicleCheck.error });
+        }
+        formattedVehicle = vehicleCheck.cleaned || effectiveVehicle;
+      }
+
+      const result = db.registerDriver({
+        driver_id,
+        driver_name: effectiveName,
+        email: emailCheck.cleaned || email,
+        phone: formattedPhone,
+        vehicle_registration: formattedVehicle,
+        password,
+        home_base_city,
+      });
+
+      res.status(201).json(result);
+    } catch (err: any) {
+      console.error('Error registering driver:', err);
+      res.status(500).json({ error: err.message || 'Failed to register driver' });
+    }
+  });
+
+  // Get driver approval and operational status
+  app.get('/api/driver/status/:driverId', (req, res) => {
+    const { driverId } = req.params;
+    const driver = db.getDriver(driverId);
+    if (!driver) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    res.json({
+      driver_id: driver.driver_id,
+      driver_name: driver.driver_name,
+      approval_status: driver.approval_status || 'APPROVED',
+      driver_status: driver.driver_status,
+      vehicle_registration: driver.vehicle_registration,
+      registered_at: driver.registered_at,
+      approved_by: driver.approved_by,
+      approved_at: driver.approved_at,
+      rejection_reason: driver.rejection_reason,
+    });
+  });
+
+  // List all pending drivers for coordinators
+  app.get('/api/coordinator/drivers/pending', (req, res) => {
+    const pendingDrivers = db.getPendingDrivers();
+    res.json({ pending_drivers: pendingDrivers });
+  });
+
+  // Coordinator approves driver registration
+  app.post('/api/coordinator/drivers/:driverId/approve', (req, res) => {
+    const { driverId } = req.params;
+    const { coordinatorId, notes } = req.body;
+    const coordId = coordinatorId || 'COORD001';
+
+    const result = db.approveDriverRegistration(driverId, coordId, notes);
+    if (result.status === 'error') {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  });
+
+  // Coordinator rejects driver registration
+  app.post('/api/coordinator/drivers/:driverId/reject', (req, res) => {
+    const { driverId } = req.params;
+    const { coordinatorId, reason } = req.body;
+    const coordId = coordinatorId || 'COORD001';
+    const rejectReason = reason || 'Driver credentials or vehicle documentation could not be verified.';
+
+    const result = db.rejectDriverRegistration(driverId, coordId, rejectReason);
+    if (result.status === 'error') {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  });
+
+  // Driver details by Email (for instant sign-in credential validation)
+  app.get('/api/driver/by-email/:email', (req, res) => {
+    const { email } = req.params;
+    const driver = db.getDriverByEmail(decodeURIComponent(email));
+    if (!driver) {
+      return res.status(404).json({ error: 'Driver not found in database' });
+    }
+    res.json({ driver });
+  });
+
   // Driver details by ID
   app.get('/api/driver/:driverId', (req, res) => {
     const { driverId } = req.params;
@@ -117,6 +253,7 @@ async function startServer() {
           carrier_id: 'CAR001',
           phone: '',
           driver_status: 'ACTIVE',
+          approval_status: 'APPROVED',
         },
       });
     }

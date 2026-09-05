@@ -10,6 +10,18 @@ export function resolveDriverOperationalContext(driverId: string) {
     };
   }
 
+  if (context.isPendingApproval) {
+    return {
+      status: 'pending_approval',
+      driver_id: driverId,
+      driver_name: context.driver_name,
+      approval_status: 'PENDING',
+      vehicle_registration: context.vehicle_registration,
+      registered_at: context.registered_at,
+      message: 'Driver registration is currently being processed by the facility coordinator.',
+    };
+  }
+
   if (context.ambiguous) {
     return {
       status: 'needs_information',

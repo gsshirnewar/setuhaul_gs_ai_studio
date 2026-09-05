@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import {
   Coordinator,
   Facility,
@@ -78,6 +80,57 @@ class DataStore {
     this.driverExceptions = JSON.parse(JSON.stringify(INITIAL_DRIVER_EXCEPTIONS));
     this.chatThreads = [];
     this.chatMessages = [];
+    this.loadRegisteredDrivers();
+  }
+
+  private getPersistencePath(): string {
+    const dataDir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    return path.join(dataDir, 'registered_drivers.json');
+  }
+
+  private loadRegisteredDrivers() {
+    try {
+      const filePath = this.getPersistencePath();
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const customDrivers: Driver[] = JSON.parse(content);
+        if (Array.isArray(customDrivers) && customDrivers.length > 0) {
+          for (const d of customDrivers) {
+            const idx = this.drivers.findIndex(
+              existing =>
+                existing.driver_id === d.driver_id ||
+                (existing.email && d.email && existing.email.toLowerCase() === d.email.toLowerCase())
+            );
+            if (idx >= 0) {
+              this.drivers[idx] = { ...this.drivers[idx], ...d };
+            } else {
+              this.drivers.push(d);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load persisted registered drivers:', e);
+    }
+  }
+
+  public persistRegisteredDrivers() {
+    try {
+      const filePath = this.getPersistencePath();
+      // Persist any driver that was newly registered or modified beyond original seeds
+      const customDrivers = this.drivers.filter(d => {
+        const isSeed = INITIAL_DRIVERS.some(
+          init => init.driver_id === d.driver_id && init.approval_status === d.approval_status
+        );
+        return !isSeed || d.driver_id.startsWith('DRV-');
+      });
+      fs.writeFileSync(filePath, JSON.stringify(customDrivers, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('Could not persist registered drivers:', e);
+    }
   }
 
   // Coordinators
@@ -134,11 +187,24 @@ class DataStore {
 
   // Driver & Carrier & Vehicles
   getDrivers(): Driver[] {
-    return this.drivers.filter(d => d.driver_status === 'ACTIVE');
+    return this.drivers.filter(d => d.driver_status === 'ACTIVE' && d.approval_status !== 'PENDING' && d.approval_status !== 'REJECTED');
+  }
+
+  getAllDrivers(): Driver[] {
+    return this.drivers;
+  }
+
+  getPendingDrivers(): Driver[] {
+    return this.drivers.filter(d => d.approval_status === 'PENDING');
   }
 
   getDriver(driverId: string): Driver | undefined {
     return this.drivers.find(d => d.driver_id === driverId);
+  }
+
+  getDriverByEmail(email: string): Driver | undefined {
+    const normalized = email.trim().toLowerCase();
+    return this.drivers.find(d => d.email.toLowerCase() === normalized);
   }
 
   getCarrier(carrierId: string): Carrier | undefined {
@@ -241,6 +307,21 @@ class DataStore {
 
   // Driver Operational Context
   getDriverOperationalContext(driverId: string): any {
+    const driver = this.getDriver(driverId);
+    if (driver && driver.approval_status === 'PENDING') {
+      return {
+        isPendingApproval: true,
+        driver_id: driverId,
+        driver_name: driver.driver_name,
+        approval_status: 'PENDING',
+        vehicle_registration: driver.vehicle_registration,
+        phone: driver.phone,
+        email: driver.email,
+        registered_at: driver.registered_at,
+        message: 'Your driver registration is currently being processed by the facility coordinator.',
+      };
+    }
+
     const shipments = this.getDriverActiveShipments(driverId);
     if (!shipments || shipments.length === 0) {
       return null;
@@ -867,6 +948,189 @@ class DataStore {
     };
   }
 
+  // Driver Registration & Coordinator Approval Workflow
+  registerDriver(data: {
+    driver_id?: string;
+    driver_name: string;
+    email: string;
+    phone?: string;
+    vehicle_registration?: string;
+    password?: string;
+    home_base_city?: string;
+    licence_number?: string;
+  }): { status: 'success' | 'updated'; driver: Driver } {
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const existing = this.getDriverByEmail(normalizedEmail) || (data.driver_id ? this.getDriver(data.driver_id) : undefined);
+    const now = new Date().toISOString();
+
+    if (existing) {
+      existing.driver_name = data.driver_name || existing.driver_name;
+      existing.phone = data.phone || existing.phone;
+      if (data.vehicle_registration) existing.vehicle_registration = data.vehicle_registration;
+      if (data.password) existing.password = data.password;
+      existing.approval_status = 'PENDING';
+      existing.driver_status = 'OFF_DUTY';
+      this.persistRegisteredDrivers();
+      return { status: 'updated', driver: existing };
+    }
+
+    const driverId = data.driver_id || `DRV-${Date.now().toString().slice(-5)}`;
+    const vehicleReg = (data.vehicle_registration || 'RJ14-PEND-01').toUpperCase().trim();
+
+    const newDriver: Driver = {
+      driver_id: driverId,
+      carrier_id: 'CAR001',
+      driver_name: data.driver_name,
+      email: normalizedEmail,
+      password: data.password || 'Password#Drv01',
+      phone: data.phone || '+91-9829000000',
+      licence_number: data.licence_number || `DL-${driverId}`,
+      home_base_city: data.home_base_city || 'Jaipur',
+      driver_status: 'OFF_DUTY',
+      approval_status: 'PENDING',
+      vehicle_registration: vehicleReg,
+      registered_at: now,
+    };
+
+    this.drivers.push(newDriver);
+
+    // Register vehicle entry
+    const vehicleId = `VEH-${driverId}`;
+    if (!this.vehicles.some(v => v.vehicle_id === vehicleId)) {
+      this.vehicles.push({
+        vehicle_id: vehicleId,
+        carrier_id: newDriver.carrier_id,
+        vehicle_type_code: '32FT_SXL',
+        registration_number: vehicleReg,
+        capacity_kg: 15000,
+        refrigeration_capable: 0,
+        active_flag: 1,
+      });
+    }
+
+    this.persistRegisteredDrivers();
+    return { status: 'success', driver: newDriver };
+  }
+
+  approveDriverRegistration(
+    driverId: string,
+    coordinatorId: string,
+    notes?: string
+  ): { status: 'approved' | 'error'; message: string; driver?: Driver; coordinator?: Coordinator } {
+    const driver = this.getDriver(driverId);
+    if (!driver) {
+      return { status: 'error', message: `Driver ${driverId} not found.` };
+    }
+
+    const coordinator = this.getCoordinator(coordinatorId) || this.coordinators[0];
+    const now = new Date().toISOString();
+
+    driver.approval_status = 'APPROVED';
+    driver.driver_status = 'ACTIVE';
+    driver.approved_by = coordinator?.name || coordinatorId;
+    driver.approved_at = now;
+
+    // Ensure driver has an active shipment assigned so operational features are immediately ready
+    const activeShipments = this.getDriverActiveShipments(driverId);
+    if (activeShipments.length === 0) {
+      const etaTime = new Date(Date.now() + 150 * 60000).toISOString();
+      const newShipmentId = `SHP-${driverId.replace(/[^A-Za-z0-9]/g, '')}`;
+      this.shipments.unshift({
+        shipment_id: newShipmentId,
+        order_reference: `ORD-SETU-${driverId.slice(-4).toUpperCase()}`,
+        carrier_id: driver.carrier_id || 'CAR001',
+        driver_id: driver.driver_id,
+        vehicle_id: `VEH-${driver.driver_id}`,
+        origin_name: 'Delhi North Central Logistics Hub',
+        origin_city: 'Delhi',
+        destination_facility_id: 'FAC-JAI-01',
+        customer_name: 'Apex Retail Logix',
+        product_category: 'FMCG & Industrial Cargo',
+        load_weight_kg: 14200,
+        pallet_count: 18,
+        required_dock_type: 'STANDARD',
+        temperature_control_required: 0,
+        priority_code: 'HIGH',
+        planned_departure_ts: now,
+        actual_departure_ts: now,
+        original_eta_ts: etaTime,
+        latest_eta_ts: etaTime,
+        expected_unload_min: 45,
+        current_status: 'IN_TRANSIT',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    // Append coordinator approval notification to driver's chat thread
+    const thread = this.createOrGetChatThread(driver.driver_id, undefined, 'GENERAL_QUERY');
+    const coordName = coordinator ? `${coordinator.name} (${coordinator.role_title})` : 'Warehouse Coordinator';
+    this.chatMessages.push({
+      chat_message_id: `MSG-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+      thread_id: thread.thread_id,
+      sender_type: 'OPERATIONS',
+      sender_reference: coordName,
+      message_text: `✅ **Registration Approved by Facility Coordinator**\n\nWelcome aboard, **${driver.driver_name}**! Your driver registration and vehicle credentials (**${driver.vehicle_registration || 'Verified'}**) have been approved by **${coordName}**.\n\n• **Status**: Cleared & Active\n• **Features Unlocked**: Live Dock Booking, Delay/ETA reporting, and Digital Gate Pass\n• **Assigned Hub**: Jaipur Central Warehouse\n\n${notes ? `• **Coordinator Note**: "${notes}"\n\n` : ''}How can I assist you with your freight today?`,
+      message_ts: now,
+      external_message_id: null,
+      is_duplicate: 0,
+      parsed_intent: 'REGISTRATION_APPROVED',
+      extracted_eta_ts: null,
+      requires_human_review: 0,
+    });
+
+    this.persistRegisteredDrivers();
+    return {
+      status: 'approved',
+      message: `Driver ${driver.driver_name} (${driver.driver_id}) approved successfully by ${coordName}.`,
+      driver,
+      coordinator,
+    };
+  }
+
+  rejectDriverRegistration(
+    driverId: string,
+    coordinatorId: string,
+    reason: string
+  ): { status: 'rejected' | 'error'; message: string; driver?: Driver } {
+    const driver = this.getDriver(driverId);
+    if (!driver) {
+      return { status: 'error', message: `Driver ${driverId} not found.` };
+    }
+
+    const coordinator = this.getCoordinator(coordinatorId) || this.coordinators[0];
+    const now = new Date().toISOString();
+
+    driver.approval_status = 'REJECTED';
+    driver.driver_status = 'INACTIVE';
+    driver.approved_by = coordinator?.name || coordinatorId;
+    driver.approved_at = now;
+    driver.rejection_reason = reason;
+
+    // Append rejection notice into driver chat
+    const thread = this.createOrGetChatThread(driver.driver_id, undefined, 'GENERAL_QUERY');
+    this.chatMessages.push({
+      chat_message_id: `MSG-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+      thread_id: thread.thread_id,
+      sender_type: 'OPERATIONS',
+      sender_reference: coordinator?.name || 'Warehouse Coordinator',
+      message_text: `⚠️ **Registration Review Notice**\n\nCoordinator **${coordinator?.name || 'Operations'}** reviewed your registration:\n\n• **Reason**: "${reason}"\n• **Status**: Requires Revision\n\nPlease re-check your license and vehicle details with dispatch.`,
+      message_ts: now,
+      external_message_id: null,
+      is_duplicate: 0,
+      parsed_intent: 'REGISTRATION_REJECTED',
+      extracted_eta_ts: null,
+      requires_human_review: 0,
+    });
+
+    this.persistRegisteredDrivers();
+    return {
+      status: 'rejected',
+      message: `Driver registration rejected. Reason: ${reason}`,
+      driver,
+    };
+  }
+
   // Coordinator Overview Data for a Facility
   getCoordinatorOverview(facilityId: string) {
     const facility = this.getFacility(facilityId);
@@ -954,6 +1218,8 @@ class DataStore {
       .sort((a, b) => (a.slot_start_ts || '').localeCompare(b.slot_start_ts || ''));
 
     const dockEvents = this.getDockStatusEvents(facilityId);
+    const pendingDrivers = this.getPendingDrivers();
+    const approvedDrivers = this.drivers.filter(d => d.approval_status === 'APPROVED');
 
     return {
       facility,
@@ -962,6 +1228,9 @@ class DataStore {
       queue,
       appointments,
       dockEvents,
+      pending_drivers: pendingDrivers,
+      approved_drivers: approvedDrivers,
+      all_drivers: this.drivers,
     };
   }
 }

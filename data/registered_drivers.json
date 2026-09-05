@@ -1,0 +1,46 @@
+[
+  {
+    "driver_id": "DRV-PEND-001",
+    "carrier_id": "CAR001",
+    "driver_name": "Dharmendra Verma",
+    "email": "d.verma@freightcorp.in",
+    "password": "Password#Drv99",
+    "phone": "+91-9829012345",
+    "licence_number": "RJ14DL9901",
+    "home_base_city": "Jaipur",
+    "driver_status": "OFF_DUTY",
+    "approval_status": "PENDING",
+    "vehicle_registration": "RJ14-GC-5521",
+    "registered_at": "2026-08-04T07:45:00+05:30"
+  },
+  {
+    "driver_id": "DRV-PEND-002",
+    "carrier_id": "CAR002",
+    "driver_name": "Jaswinder Singh",
+    "email": "jaswinder.trucking@gmail.com",
+    "password": "Password#Drv98",
+    "phone": "+91-9915044321",
+    "licence_number": "PB65DL9902",
+    "home_base_city": "Ludhiana",
+    "driver_status": "OFF_DUTY",
+    "approval_status": "PENDING",
+    "vehicle_registration": "PB65-TR-8812",
+    "registered_at": "2026-08-04T08:15:00+05:30"
+  },
+  {
+    "driver_id": "DRV-79010",
+    "carrier_id": "CAR001",
+    "driver_name": "Vikrant Chauhan",
+    "email": "vikrant.driver@gmail.com",
+    "password": "Password#123",
+    "phone": "+91 98765 43210",
+    "licence_number": "DL-DRV-79010",
+    "home_base_city": "Jaipur",
+    "driver_status": "ACTIVE",
+    "approval_status": "APPROVED",
+    "vehicle_registration": "DL01AB1234",
+    "registered_at": "2026-09-05T10:01:19.010Z",
+    "approved_by": "Vikram Joshi",
+    "approved_at": "2026-09-05T10:01:29.423Z"
+  }
+]
