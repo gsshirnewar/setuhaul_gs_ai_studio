@@ -9,10 +9,12 @@ import {
   LogIn,
   Building2,
   ShieldCheck,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './AuthModal';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { PresentationDeck } from './PresentationDeck';
 
 interface HeaderProps {
   onReset: () => void;
@@ -25,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { profile, role, signOut } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isSlidesOpen, setIsSlidesOpen] = useState(false);
 
   const isDriver = role === 'driver';
   const isCoordinator = role === 'coordinator';
@@ -167,6 +170,16 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             <button
+              id="btn-architecture-slides"
+              onClick={() => setIsSlidesOpen(true)}
+              title="View Architecture & System Slides"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600/20 to-cyan-600/20 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 hover:text-white text-xs font-semibold transition-all shadow-sm shadow-cyan-500/10"
+            >
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Slides Deck</span>
+            </button>
+
+            <button
               id="btn-reset-db"
               onClick={onReset}
               disabled={isResetting}
@@ -184,6 +197,11 @@ export const Header: React.FC<HeaderProps> = ({
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         initialRole={role || 'driver'}
+      />
+
+      <PresentationDeck
+        isOpen={isSlidesOpen}
+        onClose={() => setIsSlidesOpen(false)}
       />
     </>
   );

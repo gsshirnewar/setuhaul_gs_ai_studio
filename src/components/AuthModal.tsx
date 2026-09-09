@@ -512,7 +512,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
-              Sign In Existing
+              Sign In
             </button>
             <button
               type="button"

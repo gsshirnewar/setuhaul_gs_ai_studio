@@ -15,7 +15,6 @@ import {
   Copy,
   Check,
   Shield,
-  Key,
   Database,
   ArrowRight,
   ChevronDown,
@@ -24,9 +23,10 @@ import {
   ShieldCheck,
   Clock,
   MapPin,
+  Layers,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
-import { getSupabaseConfig } from '../lib/supabaseClient';
+import { PresentationDeck } from './PresentationDeck';
 import { INITIAL_DRIVERS, INITIAL_VEHICLES, INITIAL_COORDINATORS, INITIAL_FACILITIES } from '../db/seedData';
 import {
   validatePhoneNumber,
@@ -39,10 +39,11 @@ import {
 } from '../utils/sanitaryValidation';
 
 export const LoginScreen: React.FC = () => {
-  const { signIn, signUp, signInDemo, isConfigured, saveSupabaseKeys } = useAuth();
+  const { signIn, signUp, signInDemo } = useAuth();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [role, setRole] = useState<UserRole>('driver');
+  const [isSlidesOpen, setIsSlidesOpen] = useState(false);
 
   // Credentials
   const [email, setEmail] = useState('driver01@gmail.com');
@@ -97,17 +98,6 @@ export const LoginScreen: React.FC = () => {
 
   useEffect(() => {
     fetchDrivers();
-  }, []);
-
-  // Direct Supabase config toggle
-  const [customUrl, setCustomUrl] = useState('');
-  const [customAnonKey, setCustomAnonKey] = useState('');
-  const [showConfigInput, setShowConfigInput] = useState(false);
-
-  useEffect(() => {
-    const config = getSupabaseConfig();
-    if (config.url) setCustomUrl(config.url);
-    if (config.anonKey) setCustomAnonKey(config.anonKey);
   }, []);
 
   const clearValidationErrors = () => {
@@ -417,20 +407,6 @@ export const LoginScreen: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleSaveKeys = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customUrl.trim() || !customAnonKey.trim()) {
-      setErrorMsg('Both Supabase URL and Anon Key are required.');
-      return;
-    }
-    saveSupabaseKeys(customUrl.trim(), customAnonKey.trim());
-    setSuccessMsg('Supabase API configuration saved! App now connected to Supabase.');
-    setShowConfigInput(false);
-    setTimeout(() => setSuccessMsg(null), 3000);
-  };
-
-  const currentConfig = getSupabaseConfig();
-
   return (
     <div className={`min-h-screen flex flex-col justify-center py-10 sm:px-6 lg:px-8 relative overflow-hidden transition-colors duration-700 ${
       role === 'driver'
@@ -483,6 +459,17 @@ export const LoginScreen: React.FC = () => {
         <p className="mt-2 text-xs sm:text-sm text-slate-600 font-semibold">
           Deterministic Freight Operations & Automated Dock Scheduling
         </p>
+        <div className="mt-3 flex items-center justify-center">
+          <button
+            type="button"
+            id="btn-login-architecture-slides"
+            onClick={() => setIsSlidesOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-900 hover:bg-slate-800 text-cyan-300 hover:text-white border border-cyan-500/30 text-xs font-bold shadow-md shadow-cyan-500/10 transition-all hover:scale-105"
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Architecture & System Slides Deck</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Login Card */}
@@ -541,66 +528,6 @@ export const LoginScreen: React.FC = () => {
                 <span>Coordinator Login</span>
               </button>
             </div>
-            <p className="text-[11px] text-slate-600 mt-2 flex items-center gap-1.5 font-medium">
-              <span className={`w-2 h-2 rounded-full animate-pulse ${role === 'driver' ? 'bg-blue-600 shadow-sm shadow-blue-500' : 'bg-emerald-600 shadow-sm shadow-emerald-500'}`} />
-              <span>
-                {role === 'driver'
-                  ? 'Driver Portal: AI Dispatch Assistant, Real-time Slot Negotiations & Gate Passes.'
-                  : 'Coordinator Console: Dock Management, Supervisor Decisions & Gate Queue.'}
-              </span>
-            </p>
-          </div>
-
-          {/* Portal Highlight Card */}
-          <div className={`p-4 rounded-xl border text-xs transition-all ${
-            role === 'driver'
-              ? 'bg-gradient-to-br from-blue-50/90 via-indigo-50/70 to-cyan-50/90 border-blue-200 text-slate-800 shadow-sm'
-              : 'bg-gradient-to-br from-emerald-50/90 via-teal-50/70 to-emerald-50/90 border-emerald-200 text-slate-800 shadow-sm'
-          }`}>
-            <div className="font-semibold flex items-center justify-between mb-2">
-              <span className="flex items-center gap-2">
-                {role === 'driver' ? (
-                  <span className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-600 to-cyan-500 border border-blue-400/40 flex items-center justify-center text-white shadow-xs">
-                    <Truck className="w-4 h-4" />
-                  </span>
-                ) : (
-                  <span className="w-7 h-7 rounded-lg bg-gradient-to-tr from-emerald-600 to-teal-500 border border-emerald-400/40 flex items-center justify-center text-white shadow-xs">
-                    <ShieldCheck className="w-4 h-4" />
-                  </span>
-                )}
-                <span className="text-slate-900 font-extrabold text-xs sm:text-sm">
-                  {role === 'driver' ? 'Driver Dispatch Entry Point' : 'Operations Coordinator Entry Point'}
-                </span>
-              </span>
-              <span className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full border font-bold ${
-                role === 'driver'
-                  ? 'bg-blue-100 text-blue-800 border-blue-300'
-                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
-              }`}>
-                {role === 'driver' ? 'Fleet Access' : 'Facility Access'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
-              {role === 'driver'
-                ? 'Authorized access for carrier drivers to negotiate slot reschedules with the AI dispatch agent and view assigned dock permits.'
-                : 'Authorized access for facility yard supervisors to review incoming reschedule requests, issue sign-off tokens, and inspect dock queue.'}
-            </p>
-            {role === 'driver' && (
-              <div className="mt-2.5 pt-2 border-t border-blue-200/80 flex flex-wrap gap-1.5">
-                <span className="text-[10px] px-2.5 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-bold flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-blue-600" />
-                  <span>AI Rescheduling</span>
-                </span>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-md bg-cyan-100 text-cyan-800 border border-cyan-200 font-bold flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-cyan-600" />
-                  <span>Live ETA Sync</span>
-                </span>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-indigo-600" />
-                  <span>Digital Dock Permits</span>
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Mode Switcher Tabs */}
@@ -615,7 +542,7 @@ export const LoginScreen: React.FC = () => {
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              Sign In Existing
+              Sign In
             </button>
             <button
               type="button"
@@ -1122,63 +1049,13 @@ export const LoginScreen: React.FC = () => {
               </button>
             </div>
           </div>
-
-          {/* Supabase Connection Status / Key Configuration */}
-          <div className="pt-3 border-t border-slate-200 text-center space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-slate-600">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${isConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                <span>{isConfigured ? 'Database Online' : 'Local Fallback Engine'}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowConfigInput(!showConfigInput)}
-                className="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-[10px] underline font-medium"
-              >
-                <Database className="w-3 h-3" />
-                <span>{showConfigInput ? 'Hide Keys' : 'Configure Supabase Keys'}</span>
-              </button>
-            </div>
-
-            {showConfigInput && (
-              <form onSubmit={handleSaveKeys} className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-left animate-fade-in">
-                <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Custom Supabase Credentials</span>
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-600 mb-0.5 font-medium">Project URL</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="https://xyzcompany.supabase.co"
-                    value={customUrl}
-                    onChange={e => setCustomUrl(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-mono focus:outline-none focus:border-blue-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-600 mb-0.5 font-medium">Anon Public Key</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="eyJhbGciOi..."
-                    value={customAnonKey}
-                    onChange={e => setCustomAnonKey(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-mono focus:outline-none focus:border-blue-600"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
-                >
-                  Save & Connect Database
-                </button>
-              </form>
-            )}
-          </div>
         </div>
       </div>
+
+      <PresentationDeck
+        isOpen={isSlidesOpen}
+        onClose={() => setIsSlidesOpen(false)}
+      />
     </div>
   );
 };
