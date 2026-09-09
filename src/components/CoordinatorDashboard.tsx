@@ -25,10 +25,16 @@ import {
   UserX,
   UserPlus,
   FileText,
+  Database,
+  Radio,
+  Zap,
 } from 'lucide-react';
 import { CoordinatorDecisionModal } from './CoordinatorDecisionModal';
+import { SupabaseContentionPanel } from './SupabaseContentionPanel';
 import { Coordinator } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { useSlotContention } from '../hooks/useSlotContention';
+import { useSupabaseRealtime } from '../lib/realtimeService';
 
 interface Facility {
   facility_id: string;
@@ -46,9 +52,20 @@ export const CoordinatorDashboard: React.FC = () => {
   const [selectedFacilityId, setSelectedFacilityId] = useState<string>('FAC-JAI-01');
   const [overview, setOverview] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'driver-approvals' | 'appointments' | 'queue' | 'exceptions' | 'docks' | 'coordinators'>('driver-approvals');
+  const [activeTab, setActiveTab] = useState<'driver-approvals' | 'appointments' | 'supabase-concurrency' | 'queue' | 'exceptions' | 'docks' | 'coordinators'>('driver-approvals');
   const [selectedAppointmentForDecision, setSelectedAppointmentForDecision] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Dedicated Contention Logic Hook: flags slots where requests > 1
+  const {
+    isSlotContested,
+    getSlotRequestCount,
+    totalContestedSlots,
+    totalContestedRequests,
+    refetch: refetchContention,
+  } = useSlotContention({
+    facilityId: 'FAC_JAI_01',
+  });
 
   // Driver approval & rejection states
   const [approvingDriverId, setApprovingDriverId] = useState<string | null>(null);
@@ -56,6 +73,12 @@ export const CoordinatorDashboard: React.FC = () => {
   const [rejectModalDriver, setRejectModalDriver] = useState<any | null>(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
   const [driverActionNotification, setDriverActionNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Supabase Drivers Synchronization status
+  const [supabaseSyncStatus, setSupabaseSyncStatus] = useState<any>(null);
+  const [isSyncingDrivers, setIsSyncingDrivers] = useState<boolean>(false);
+  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
+  const [copiedSql, setCopiedSql] = useState<boolean>(false);
 
   // Fetch facilities
   useEffect(() => {
@@ -83,6 +106,54 @@ export const CoordinatorDashboard: React.FC = () => {
       .catch(console.error)
       .finally(() => setIsLoading(false));
   };
+
+  const fetchSupabaseDriverStatus = async () => {
+    try {
+      const res = await fetch('/api/supabase/drivers/status');
+      if (res.ok) {
+        const data = await res.json();
+        setSupabaseSyncStatus(data);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch Supabase driver status', e);
+    }
+  };
+
+  const handleSyncDriversToSupabase = async () => {
+    setIsSyncingDrivers(true);
+    try {
+      const res = await fetch('/api/supabase/sync-drivers', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setDriverActionNotification({
+          type: 'success',
+          message: data.message || `Successfully pushed drivers to Supabase with verification status set to VERIFIED!`,
+        });
+      } else {
+        setDriverActionNotification({
+          type: 'error',
+          message: data.message || 'Supabase push notice: Table public.drivers may need SQL creation.',
+        });
+        if (data.missingTable) {
+          setShowSqlModal(true);
+        }
+      }
+      fetchSupabaseDriverStatus();
+      fetchOverview();
+    } catch (err: any) {
+      setDriverActionNotification({
+        type: 'error',
+        message: err.message || 'Failed to sync drivers to Supabase',
+      });
+    } finally {
+      setIsSyncingDrivers(false);
+      setTimeout(() => setDriverActionNotification(null), 6000);
+    }
+  };
+
+  useEffect(() => {
+    fetchSupabaseDriverStatus();
+  }, []);
 
   const handleApproveDriver = async (driverId: string, driverName: string) => {
     setApprovingDriverId(driverId);
@@ -190,22 +261,69 @@ export const CoordinatorDashboard: React.FC = () => {
     }
   };
 
+  const [realtimeNotification, setRealtimeNotification] = useState<{ event: string; message: string; time: string } | null>(null);
+
+  // Supabase Realtime WebSocket integration: sub-second live updates
+  const { status: realtimeStatus, isConnected: isRealtimeConnected, lastEvent: realtimeLastEvent, activePeersCount } = useSupabaseRealtime({
+    onEvent: (event, payload) => {
+      // Instantly trigger re-sync on any WebSocket event
+      fetchOverview();
+      refetchContention();
+
+      let message = `Realtime Event: ${event}`;
+      if (event === 'SLOT_UPDATED') {
+        message = `Dock Slot ${payload.slotId || ''} updated to ${payload.status || 'UPDATED'}`;
+      } else if (event === 'CONTENTION_ALERT') {
+        message = `⚠️ Concurrency Contention: Slot ${payload.slotId} contested by ${payload.competingDriverName || 'another driver'}`;
+      } else if (event === 'CONTENTION_RESOLVED') {
+        message = `✅ Contention resolved on Slot ${payload.slotId}`;
+      } else if (event === 'DRIVER_STATUS_UPDATED') {
+        message = `Driver ${payload.driverId} registration status: ${payload.status}`;
+      } else if (event === 'APPOINTMENT_APPROVED') {
+        message = `Appointment ${payload.appointmentId} approved and confirmed`;
+      } else if (event === 'APPOINTMENT_REJECTED') {
+        message = `Appointment ${payload.appointmentId} rejected`;
+      } else if (event === 'HOLDS_EXPIRED') {
+        message = `Expired holds released back to AVAILABLE status`;
+      } else if (event === 'SYSTEM_RESET') {
+        message = `System database reset to seed state`;
+      }
+
+      setRealtimeNotification({ event, message, time: new Date().toLocaleTimeString() });
+      setTimeout(() => {
+        setRealtimeNotification(prev => (prev?.message === message ? null : prev));
+      }, 5000);
+    },
+    userProfile: profile ? {
+      id: profile.id,
+      fullName: profile.fullName,
+      role: profile.role,
+      facilityId: profile.facilityId || selectedFacilityId,
+    } : null,
+  });
+
   useEffect(() => {
     fetchOverview();
-  }, [selectedFacilityId]);
+    if (selectedFacilityId) {
+      refetchContention();
+    }
+  }, [selectedFacilityId, refetchContention]);
 
-  // Periodic polling for live updates
+  // Fallback relaxed background heartbeat (30s) instead of tight polling
   useEffect(() => {
-    const timer = setInterval(() => {
+    const fallbackTimer = setInterval(() => {
       if (selectedFacilityId) {
         fetch(`/api/coordinator/${selectedFacilityId}`)
           .then(res => res.json())
           .then(data => setOverview(data))
           .catch(() => {});
+
+        refetchContention();
       }
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [selectedFacilityId]);
+    }, 30000);
+
+    return () => clearInterval(fallbackTimer);
+  }, [selectedFacilityId, refetchContention]);
 
   const pendingAppointments = overview?.appointments?.filter(
     (a: any) => a.appointment_status === 'PENDING_CONFIRMATION'
@@ -253,6 +371,29 @@ export const CoordinatorDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Realtime WebSocket Event Toast/Banner */}
+      {realtimeNotification && (
+        <div className="p-3 bg-slate-900/95 border border-cyan-500/40 rounded-xl flex items-center justify-between gap-3 text-xs text-slate-200 animate-fade-in shadow-xl backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <Radio className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+            <div>
+              <span className="font-bold text-cyan-300 mr-1.5">[Supabase Realtime]</span>
+              <span className="text-slate-200 font-medium">{realtimeNotification.message}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-[10px] text-slate-400 font-mono">{realtimeNotification.time}</span>
+            <button
+              onClick={() => setRealtimeNotification(null)}
+              className="text-slate-400 hover:text-white text-xs px-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Header & Facility Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl">
         <div className="flex items-center gap-3.5">
@@ -273,6 +414,20 @@ export const CoordinatorDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Supabase Realtime Live WebSocket Indicator */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isRealtimeConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
+              }`}
+            />
+            <Radio className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-medium hidden sm:inline">Supabase Realtime:</span>
+            <span className="text-emerald-400 font-semibold font-mono text-[11px]">
+              {isRealtimeConnected ? 'LIVE' : realtimeStatus}
+            </span>
+          </div>
+
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-400 font-medium">Facility:</label>
             <select
@@ -448,6 +603,28 @@ export const CoordinatorDashboard: React.FC = () => {
             </button>
 
             <button
+              id="subtab-supabase-concurrency"
+              onClick={() => setActiveTab('supabase-concurrency')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
+                activeTab === 'supabase-concurrency'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-400/40'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>Supabase Concurrency & Contention</span>
+              {totalContestedSlots > 0 ? (
+                <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold animate-pulse">
+                  {totalContestedSlots} Contested ({totalContestedRequests} req &gt; 1)
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">
+                  Live DB
+                </span>
+              )}
+            </button>
+
+            <button
               id="subtab-coordinators"
               onClick={() => setActiveTab('coordinators')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
@@ -516,7 +693,7 @@ export const CoordinatorDashboard: React.FC = () => {
         {activeTab === 'driver-approvals' && (
           <div className="p-4 space-y-5">
             {/* Header info card */}
-            <div className="p-4 bg-slate-950/80 border border-amber-500/30 rounded-xl space-y-2">
+            <div className="p-4 bg-slate-950/80 border border-amber-500/30 rounded-xl space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
@@ -525,16 +702,67 @@ export const CoordinatorDashboard: React.FC = () => {
                   <div>
                     <h3 className="text-sm font-bold text-slate-100">Driver Directory & Compliance Security Gateway</h3>
                     <p className="text-xs text-slate-400">
-                      Total Registered Drivers in Database: <strong className="text-cyan-400 font-mono">{((overview?.approved_drivers?.length || 0) + (overview?.pending_drivers?.length || 0))} Drivers</strong> ({overview?.approved_drivers?.length || 0} Approved Fleet + {overview?.pending_drivers?.length || 0} Pending Applications)
+                      Total Registered Drivers: <strong className="text-cyan-400 font-mono">{((overview?.approved_drivers?.length || 0) + (overview?.pending_drivers?.length || 0))} Drivers</strong> ({overview?.approved_drivers?.length || 0} Verified Fleet + {overview?.pending_drivers?.length || 0} Pending Verification)
                     </p>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-mono font-bold border border-amber-500/40">
-                  {overview?.pending_drivers?.length || 0} Pending Approvals
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSyncDriversToSupabase}
+                    disabled={isSyncingDrivers}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all disabled:opacity-50"
+                    title="Pushes all drivers to Supabase with verification_status = 'VERIFIED'"
+                  >
+                    {isSyncingDrivers ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Database className="w-3.5 h-3.5" />
+                    )}
+                    <span>Push Drivers to Supabase</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowSqlModal(true)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs border border-slate-700 flex items-center gap-1.5 transition-colors"
+                    title="View SQL DDL for Supabase SQL Editor"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Supabase SQL</span>
+                  </button>
+                </div>
               </div>
+
+              {/* Supabase status indicator bar */}
+              <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 relative">
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${supabaseSyncStatus?.tableExists ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${supabaseSyncStatus?.tableExists ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                  </span>
+                  <span className="text-slate-300">
+                    Supabase Table: <code className="font-mono text-cyan-400 font-bold">public.drivers</code>
+                  </span>
+                  {supabaseSyncStatus?.tableExists ? (
+                    <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold font-mono">
+                      SYNCED ({supabaseSyncStatus.supabaseCount} records in Supabase)
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold font-mono">
+                      TABLE READY FOR CREATION
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+                  <span>Verified: <strong className="text-emerald-400">{supabaseSyncStatus?.verifiedCount ?? (overview?.approved_drivers?.length || 0)}</strong></span>
+                  <span>|</span>
+                  <span>Pending: <strong className="text-amber-400">{supabaseSyncStatus?.pendingCount ?? (overview?.pending_drivers?.length || 0)}</strong></span>
+                </div>
+              </div>
+
               <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800/80 pt-2">
-                <strong>Operational Policy:</strong> Newly registered drivers are quarantined in <strong>PENDING</strong> status. The AI assistant welcomes the driver and notifies them that their registration is being processed by the facility coordinator. Once you click <strong>Approve</strong>, their account is activated and an operational shipment is dispatched.
+                <strong>Supabase Verification Workflow:</strong> Drivers authenticate directly with username/password against the Supabase <code className="text-cyan-300">drivers</code> table. Existing drivers are initialized with <strong className="text-emerald-400">VERIFIED</strong> status. New driver registrations are saved with <strong className="text-amber-400">PENDING</strong> verification status until approved by facility operations.
               </p>
             </div>
 
@@ -620,10 +848,10 @@ export const CoordinatorDashboard: React.FC = () => {
                             <div className="space-y-1">
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
                                 <Clock className="w-2.5 h-2.5 animate-pulse" />
-                                PENDING REVIEW
+                                PENDING VERIFICATION
                               </span>
-                              <div className="text-[10px] text-slate-500">
-                                Chatbot active with coordinator notice
+                              <div className="text-[10px] text-amber-400/80 font-mono">
+                                Supabase Status: PENDING
                               </div>
                             </div>
                           </td>
@@ -635,13 +863,14 @@ export const CoordinatorDashboard: React.FC = () => {
                                 disabled={approvingDriverId === d.driver_id}
                                 onClick={() => handleApproveDriver(d.driver_id, d.driver_name)}
                                 className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all disabled:opacity-50"
+                                title="Changes verification_status to VERIFIED in Supabase and activates fleet status"
                               >
                                 {approvingDriverId === d.driver_id ? (
                                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                 )}
-                                <span>Approve</span>
+                                <span>Verify & Approve</span>
                               </button>
 
                               <button
@@ -710,13 +939,28 @@ export const CoordinatorDashboard: React.FC = () => {
                           {d.vehicle_registration || 'Fleet Vehicle'}
                         </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex-shrink-0">
-                        APPROVED
-                      </span>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold font-mono">
+                          VERIFIED
+                        </span>
+                        <span className="text-[9px] font-mono text-emerald-400/80">
+                          Supabase
+                        </span>
+                      </div>
                     </div>
                   ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Tab 1: Supabase Concurrency & Contention Resolution */}
+        {activeTab === 'supabase-concurrency' && (
+          <div className="p-4">
+            <SupabaseContentionPanel
+              facilityId="FAC_JAI_01"
+              onContentionResolved={fetchOverview}
+            />
           </div>
         )}
 
@@ -766,10 +1010,18 @@ export const CoordinatorDashboard: React.FC = () => {
                             {appt.dock_type}
                           </span>
                         </div>
-                        <span className="text-[11px] text-slate-400">
+                        <span className="text-[11px] text-slate-400 block">
                           {appt.slot_start_ts?.split('T')[1]?.substring(0, 5)}–
                           {appt.slot_end_ts?.split('T')[1]?.substring(0, 5)}
                         </span>
+                        {appt.slot_id && isSlotContested(appt.slot_id) && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-bold animate-pulse">
+                              <AlertTriangle className="w-2.5 h-2.5 text-rose-400" />
+                              Contested ({getSlotRequestCount(appt.slot_id)} req &gt; 1)
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         <span className="text-slate-300 block">{appt.product_category}</span>
@@ -1205,6 +1457,133 @@ export const CoordinatorDashboard: React.FC = () => {
                   <XCircle className="w-3.5 h-3.5" />
                 )}
                 <span>Confirm Rejection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Supabase Drivers Table SQL Schema Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-750 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-bold text-slate-100">
+                  Supabase Drivers Table SQL DDL
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Run this script in your{' '}
+              <a
+                href="https://supabase.com/dashboard"
+                target="_blank"
+                rel="noreferrer"
+                className="text-cyan-400 underline font-semibold"
+              >
+                Supabase SQL Editor
+              </a>{' '}
+              to create the <code className="text-emerald-300 font-mono">public.drivers</code> table with the{' '}
+              <code className="text-emerald-300 font-mono">verification_status</code> column and seed verified drivers:
+            </p>
+
+            <div className="relative">
+              <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-[11px] font-mono text-emerald-300 overflow-x-auto max-h-72 leading-relaxed">
+{`-- Create drivers table with verification status in Supabase
+CREATE TABLE IF NOT EXISTS public.drivers (
+    driver_id TEXT PRIMARY KEY,
+    carrier_id TEXT DEFAULT 'CAR001',
+    driver_name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    phone TEXT,
+    licence_number TEXT,
+    home_base_city TEXT,
+    driver_status TEXT DEFAULT 'ACTIVE',
+    verification_status TEXT DEFAULT 'PENDING' CHECK (verification_status IN ('VERIFIED', 'PENDING', 'REJECTED')),
+    approval_status TEXT DEFAULT 'PENDING' CHECK (approval_status IN ('APPROVED', 'PENDING', 'REJECTED')),
+    vehicle_registration TEXT,
+    registered_at TIMESTAMPTZ DEFAULT now(),
+    verified_at TIMESTAMPTZ,
+    verified_by TEXT,
+    approved_at TIMESTAMPTZ,
+    approved_by TEXT,
+    rejection_reason TEXT
+);
+
+-- Enable RLS and public access policy
+ALTER TABLE public.drivers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access to drivers" ON public.drivers
+    FOR ALL USING (true) WITH CHECK (true);`}
+              </pre>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`-- Create drivers table with verification status in Supabase
+CREATE TABLE IF NOT EXISTS public.drivers (
+    driver_id TEXT PRIMARY KEY,
+    carrier_id TEXT DEFAULT 'CAR001',
+    driver_name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    phone TEXT,
+    licence_number TEXT,
+    home_base_city TEXT,
+    driver_status TEXT DEFAULT 'ACTIVE',
+    verification_status TEXT DEFAULT 'PENDING' CHECK (verification_status IN ('VERIFIED', 'PENDING', 'REJECTED')),
+    approval_status TEXT DEFAULT 'PENDING' CHECK (approval_status IN ('APPROVED', 'PENDING', 'REJECTED')),
+    vehicle_registration TEXT,
+    registered_at TIMESTAMPTZ DEFAULT now(),
+    verified_at TIMESTAMPTZ,
+    verified_by TEXT,
+    approved_at TIMESTAMPTZ,
+    approved_by TEXT,
+    rejection_reason TEXT
+);
+
+-- Enable RLS and public access policy
+ALTER TABLE public.drivers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access to drivers" ON public.drivers
+    FOR ALL USING (true) WITH CHECK (true);`);
+                  setCopiedSql(true);
+                  setTimeout(() => setCopiedSql(false), 3000);
+                }}
+                className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 flex items-center gap-1.5 transition-colors"
+              >
+                {copiedSql ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Copy SQL</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <span className="text-[11px] text-slate-400">
+                A full seed script is also saved in <code className="text-cyan-400">/data/supabase_drivers_schema.sql</code>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -224,3 +224,36 @@ export function validateFullName(input: string): ValidationResult {
     formatted: raw,
   };
 }
+
+/**
+ * Normalizes phone numbers for accurate duplicate comparison regardless of formatting,
+ * country code (+91 / 91 / 0), spaces, brackets, or dashes.
+ * Returns the 10-digit core mobile number.
+ */
+export function normalizePhoneForComparison(phone?: string | null): string {
+  if (!phone) return '';
+  let digits = String(phone).replace(/\D/g, '');
+  if (digits.startsWith('91') && digits.length > 10) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('0') && digits.length > 10) {
+    digits = digits.slice(1);
+  }
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+/**
+ * Normalizes truck / vehicle registration numbers for accurate duplicate comparison
+ * regardless of spaces, hyphens, or case (e.g. "RJ14-GC-5521" vs "rj14 gc 5521" -> "RJ14GC5521").
+ */
+export function normalizeTruckRegForComparison(reg?: string | null): string {
+  if (!reg) return '';
+  return String(reg).toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Normalizes email address for duplicate comparison
+ */
+export function normalizeEmailForComparison(email?: string | null): string {
+  if (!email) return '';
+  return String(email).trim().toLowerCase();
+}

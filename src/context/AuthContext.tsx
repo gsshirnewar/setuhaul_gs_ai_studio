@@ -13,9 +13,12 @@ export interface UserProfile {
   phone?: string;
   vehicleReg?: string; // for drivers
   facilityId?: string; // for coordinators
+  verificationStatus?: 'VERIFIED' | 'PENDING' | 'REJECTED';
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
   approvedBy?: string;
   approvedAt?: string;
+  verifiedBy?: string;
+  verifiedAt?: string;
 }
 
 interface AuthContextType {
@@ -180,7 +183,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const client = getSupabaseClient();
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 1. If Supabase is connected, attempt Supabase Auth first
+    // 1. Direct Driver Authentication from Supabase drivers table (username/email and password)
+    try {
+      const loginRes = await fetch('/api/auth/driver-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: normalizedEmail, password }),
+      });
+
+      if (loginRes.ok) {
+        const loginData = await loginRes.json();
+        if (loginData.authenticated && loginData.driver) {
+          const d = loginData.driver;
+          const vehicle = INITIAL_VEHICLES.find(v => v.carrier_id === d.carrier_id) || INITIAL_VEHICLES[0];
+          const driverProfile: UserProfile = {
+            id: d.driver_id,
+            email: d.email,
+            role: 'driver',
+            fullName: d.driver_name,
+            phone: d.phone,
+            vehicleReg: d.vehicle_registration || vehicle.registration_number,
+            verificationStatus: d.verification_status || (d.approval_status === 'PENDING' ? 'PENDING' : 'VERIFIED'),
+            approvalStatus: d.approval_status || 'APPROVED',
+            approvedBy: d.approved_by,
+            approvedAt: d.approved_at,
+            verifiedBy: d.verified_by || d.approved_by,
+            verifiedAt: d.verified_at || d.approved_at,
+          };
+
+          setProfile(driverProfile);
+          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(driverProfile));
+          return { error: null };
+        }
+      } else if (loginRes.status === 401) {
+        const errData = await loginRes.json().catch(() => ({}));
+        // If password explicitly failed for an existing driver, stop here with clear error
+        if (errData.error?.includes('password') || errData.error?.includes('credentials')) {
+          return { error: new Error(errData.error) };
+        }
+      }
+    } catch (authErr) {
+      console.warn('Backend driver-login error, proceeding to coordinator/auth checks:', authErr);
+    }
+
+    // 2. If Supabase is connected, attempt Supabase Auth for coordinators or auth users
     if (client) {
       try {
         const { data, error } = await client.auth.signInWithPassword({
@@ -196,20 +242,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(userProf));
           return { error: null };
         }
-        // If Supabase returned an error, fallback to checking local database drivers
       } catch (err: any) {
         console.warn('Supabase sign-in fallback triggered:', err);
       }
     }
 
-    // 2. Direct Database Driver Credentials Validation
+    // 3. Fallback to Local DataStore Driver Credentials Validation
     const matchedDriver = await findDatabaseDriver(normalizedEmail);
     if (matchedDriver) {
       if (matchedDriver.password && matchedDriver.password !== password) {
         return { error: new Error('Incorrect password. Please verify the password from the driver directory.') };
       }
 
-      // Look up carrier's vehicle
       const vehicle = INITIAL_VEHICLES.find(v => v.carrier_id === matchedDriver.carrier_id) || INITIAL_VEHICLES[0];
       const driverProfile: UserProfile = {
         id: matchedDriver.driver_id,
@@ -218,18 +262,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName: matchedDriver.driver_name,
         phone: matchedDriver.phone,
         vehicleReg: matchedDriver.vehicle_registration || vehicle.registration_number,
+        verificationStatus: matchedDriver.verification_status || (matchedDriver.approval_status === 'PENDING' ? 'PENDING' : 'VERIFIED'),
         approvalStatus: matchedDriver.approval_status || 'APPROVED',
       };
 
-      // Check for live status update from backend
       try {
         const statusResp = await fetch(`/api/driver/status/${matchedDriver.driver_id}`);
         if (statusResp.ok) {
           const statusData = await statusResp.json();
           if (statusData.approval_status) {
             driverProfile.approvalStatus = statusData.approval_status;
+            driverProfile.verificationStatus = statusData.verification_status || (statusData.approval_status === 'PENDING' ? 'PENDING' : 'VERIFIED');
             driverProfile.approvedBy = statusData.approved_by;
             driverProfile.approvedAt = statusData.approved_at;
+            driverProfile.verifiedBy = statusData.verified_by;
+            driverProfile.verifiedAt = statusData.verified_at;
           }
         }
       } catch (e) {
@@ -313,7 +360,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Register driver with backend DataStore
     if (isDriver) {
       try {
-        await fetch('/api/driver/register', {
+        const regRes = await fetch('/api/driver/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -325,8 +372,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             password,
           }),
         });
-      } catch (err) {
+
+        if (!regRes.ok) {
+          const errData = await regRes.json().catch(() => ({}));
+          const errMsg = errData.error || 'Driver registration failed. Please verify credentials.';
+          return { error: new Error(errMsg) };
+        }
+      } catch (err: any) {
         console.warn('Backend driver registration sync error:', err);
+        return { error: new Error(err.message || 'Driver registration service unavailable.') };
       }
     }
 
@@ -353,6 +407,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSession(data.session);
           const userProf: UserProfile = {
             ...buildProfileFromUser(data.user),
+            verificationStatus: isDriver ? 'PENDING' : 'VERIFIED',
             approvalStatus,
           };
           setProfile(userProf);
@@ -373,6 +428,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       phone: profileData.phone || '+91 90000 00000',
       vehicleReg: profileData.vehicleReg || 'MH-12-AB-1234',
       facilityId: profileData.facilityId || 'FAC-JAI-01',
+      verificationStatus: isDriver ? 'PENDING' : 'VERIFIED',
       approvalStatus,
     };
 
@@ -389,12 +445,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (resp.ok) {
         const data = await resp.json();
         if (data.approval_status) {
-          if (profile && profile.id === idToCheck && profile.approvalStatus !== data.approval_status) {
+          if (profile && profile.id === idToCheck && (profile.approvalStatus !== data.approval_status || profile.verificationStatus !== data.verification_status)) {
             const updated: UserProfile = {
               ...profile,
+              verificationStatus: data.verification_status || (data.approval_status === 'APPROVED' ? 'VERIFIED' : 'PENDING'),
               approvalStatus: data.approval_status,
               approvedBy: data.approved_by,
               approvedAt: data.approved_at,
+              verifiedBy: data.verified_by || data.approved_by,
+              verifiedAt: data.verified_at || data.approved_at,
             };
             setProfile(updated);
             localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(updated));

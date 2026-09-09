@@ -19,7 +19,6 @@ import {
   Users,
   Copy,
   Check,
-  CornerDownLeft,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { getSupabaseConfig } from '../lib/supabaseClient';
@@ -29,6 +28,9 @@ import {
   validateTruckRegistration,
   validateEmail,
   validateFullName,
+  normalizePhoneForComparison,
+  normalizeTruckRegForComparison,
+  normalizeEmailForComparison,
 } from '../utils/sanitaryValidation';
 
 interface AuthModalProps {
@@ -145,14 +147,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setPhoneError(res.error);
       setPhoneValid(false);
       return false;
-    } else {
-      setPhoneError(null);
-      setPhoneValid(true);
-      if (res.formatted) {
-        setPhone(res.formatted);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizePhoneForComparison(res.cleaned || val);
+      const conflict = liveDrivers.find(d => normalizePhoneForComparison(d.phone) === normalizedInput);
+      if (conflict) {
+        setPhoneError(`This phone number is already registered (assigned to driver ${conflict.driver_name} - ${conflict.driver_id}). Phone numbers must be unique.`);
+        setPhoneValid(false);
+        return false;
+      }
+    }
+
+    setPhoneError(null);
+    setPhoneValid(true);
+    if (res.formatted) {
+      setPhone(res.formatted);
+    }
+    return true;
   };
 
   const validateVehicleRegField = (val: string = vehicleReg): boolean => {
@@ -161,14 +174,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setVehicleRegError(res.error);
       setVehicleRegValid(false);
       return false;
-    } else {
-      setVehicleRegError(null);
-      setVehicleRegValid(true);
-      if (res.cleaned) {
-        setVehicleReg(res.cleaned);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers and vehicles
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizeTruckRegForComparison(res.cleaned || val);
+      const conflictDriver = liveDrivers.find(d => normalizeTruckRegForComparison(d.vehicle_registration) === normalizedInput);
+      const conflictVehicle = INITIAL_VEHICLES.find(v => normalizeTruckRegForComparison(v.registration_number) === normalizedInput);
+      if (conflictDriver || conflictVehicle) {
+        const ownerName = conflictDriver ? `driver "${conflictDriver.driver_name}" (${conflictDriver.driver_id})` : `fleet vehicle (${conflictVehicle?.vehicle_id})`;
+        setVehicleRegError(`Truck plate (${res.cleaned || val}) is already registered in system (assigned to ${ownerName}). Truck plates must be unique.`);
+        setVehicleRegValid(false);
+        return false;
+      }
+    }
+
+    setVehicleRegError(null);
+    setVehicleRegValid(true);
+    if (res.cleaned) {
+      setVehicleReg(res.cleaned);
+    }
+    return true;
   };
 
   const validateEmailField = (val: string = email): boolean => {
@@ -177,14 +203,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setEmailError(res.error);
       setEmailValid(false);
       return false;
-    } else {
-      setEmailError(null);
-      setEmailValid(true);
-      if (res.cleaned) {
-        setEmail(res.cleaned);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizeEmailForComparison(res.cleaned || val);
+      const conflict = liveDrivers.find(d => normalizeEmailForComparison(d.email) === normalizedInput);
+      if (conflict) {
+        setEmailError(`Email (${res.cleaned || val}) is already registered to driver ${conflict.driver_name} (${conflict.driver_id}). Email addresses must be unique.`);
+        setEmailValid(false);
+        return false;
+      }
+    }
+
+    setEmailError(null);
+    setEmailValid(true);
+    if (res.cleaned) {
+      setEmail(res.cleaned);
+    }
+    return true;
   };
 
   const validateFullNameField = (val: string = fullName): boolean => {
@@ -753,13 +790,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <>
                 {/* Full Name */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-medium text-slate-300">Full Name</label>
-                    <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                      <CornerDownLeft className="w-3 h-3 text-slate-500" />
-                      <span>Press [Enter] to check</span>
-                    </span>
-                  </div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
@@ -792,30 +823,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     )}
                   </div>
-                  {fullNameError ? (
+                  {fullNameError && (
                     <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
                       <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                       <span>{fullNameError}</span>
                     </p>
-                  ) : fullNameValid ? (
-                    <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                      <span>Full name verified</span>
-                    </p>
-                  ) : null}
+                  )}
                 </div>
 
                 {role === 'driver' ? (
                   <div className="space-y-3">
                     {/* Phone Number with +91 */}
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-xs font-medium text-slate-300">Phone Number (India)</label>
-                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                          <CornerDownLeft className="w-3 h-3 text-slate-500" />
-                          <span>Press [Enter] to check</span>
-                        </span>
-                      </div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">Phone Number (India)</label>
                       <div className="relative flex rounded-xl shadow-xs">
                         <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-800 bg-slate-900 text-slate-300 text-xs font-bold select-none font-mono">
                           🇮🇳 +91
@@ -860,27 +880,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                           <span>{phoneError}</span>
                         </p>
-                      ) : phoneValid ? (
-                        <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                          <span>Valid Indian 10-digit mobile (+91 {phone.replace(/\D/g, '').slice(-10)})</span>
-                        </p>
-                      ) : (
+                      ) : !phoneValid && !phone ? (
                         <p className="text-[10px] text-slate-500 mt-1">
-                          10 digits without letters. Valid Indian numbers begin with 6, 7, 8, or 9.
+                          Enter a valid 10-digit number
                         </p>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Truck Reg Plate */}
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-xs font-medium text-slate-300">Truck Registration Plate</label>
-                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                          <CornerDownLeft className="w-3 h-3 text-slate-500" />
-                          <span>Press [Enter] to check</span>
-                        </span>
-                      </div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">Truck Registration Plate</label>
                       <div className="relative">
                         <Truck className="w-4 h-4 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input
@@ -913,19 +922,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                         )}
                       </div>
-                      {vehicleRegError ? (
+                      {vehicleRegError && (
                         <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
                           <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                           <span>{vehicleRegError}</span>
-                        </p>
-                      ) : vehicleRegValid ? (
-                        <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                          <span>Valid Indian commercial plate ({vehicleReg})</span>
-                        </p>
-                      ) : (
-                        <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                          Format: ^[A-Z]&#123;2&#125;[0-9]&#123;1,2&#125;[A-Z]&#123;1,2&#125;[0-9]&#123;4&#125;$ (e.g. RJ14GT4101 or MH12AB1234)
                         </p>
                       )}
                     </div>
@@ -949,17 +949,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             {/* Email Field */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-slate-300">
-                  {role === 'driver' ? 'Driver Email / Username' : 'Coordinator Work Email'}
-                </label>
-                {mode === 'signup' && (
-                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                    <CornerDownLeft className="w-3 h-3 text-slate-500" />
-                    <span>Press [Enter] to check</span>
-                  </span>
-                )}
-              </div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">
+                {role === 'driver' ? 'Driver Email / Username' : 'Coordinator Work Email'}
+              </label>
               <div className="relative">
                 <Mail className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
                   role === 'driver' ? 'text-blue-400' : 'text-emerald-400'
@@ -996,17 +988,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <AlertCircle className="w-4 h-4 text-rose-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 )}
               </div>
-              {emailError ? (
+              {emailError && (
                 <p className="text-[11px] text-rose-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
                   <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                   <span>{emailError}</span>
                 </p>
-              ) : emailValid && mode === 'signup' ? (
-                <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-1 animate-fade-in font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                  <span>Valid email address (.com / .in)</span>
-                </p>
-              ) : null}
+              )}
             </div>
 
             {/* Password Field */}
@@ -1018,9 +1005,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 }`} />
                 <input
                   ref={passwordRef}
-                  type="text"
+                  type="password"
                   required
-                  placeholder={role === 'driver' ? 'Password#Drv01' : 'Password#Coord01'}
+                  placeholder="••••••••••••"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   className={`w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none font-mono transition-all ${

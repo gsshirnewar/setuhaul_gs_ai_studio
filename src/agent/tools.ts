@@ -143,7 +143,7 @@ export async function dispatchToolCall(toolName: string, args: Record<string, an
     case 'select_slot': {
       const slotId = String(args.slot_id || '');
       const orderRef = args.order_reference ? String(args.order_reference) : null;
-      return selectSlotForDriver(driverId, slotId, orderRef);
+      return await selectSlotForDriver(driverId, slotId, orderRef);
     }
     case 'get_my_exception_or_appointment_status': {
       return getExceptionOrAppointmentStatus(driverId);

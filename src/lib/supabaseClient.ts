@@ -22,9 +22,12 @@ const getEnvVar = (key: string): string => {
   return '';
 };
 
+const DEFAULT_SUPABASE_URL = 'https://ivjuhthqecntjywfyrag.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2anVodGhxZWNudGp5d2Z5cmFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3MzAwNzAsImV4cCI6MjEwMjMwNjA3MH0.cMtR-mPONHTuJqGRMymSDerqryfltdGqtVicRC7fwYQ';
+
 export const getSupabaseConfig = () => {
-  const url = getEnvVar('VITE_SUPABASE_URL');
-  const anonKey = getEnvVar('VITE_SUPABASE_ANON_KEY');
+  const url = getEnvVar('VITE_SUPABASE_URL') || DEFAULT_SUPABASE_URL;
+  const anonKey = getEnvVar('VITE_SUPABASE_ANON_KEY') || DEFAULT_SUPABASE_ANON_KEY;
   return {
     url,
     anonKey,

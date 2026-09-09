@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './AuthModal';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 interface HeaderProps {
   onReset: () => void;
@@ -65,11 +66,13 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="md:hidden">
               {profile ? (
                 <button
-                  onClick={() => setIsAuthModalOpen(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200"
+                  id="btn-header-mobile-exit"
+                  onClick={() => signOut()}
+                  title="Sign Out"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-rose-300"
                 >
-                  <User className="w-3.5 h-3.5 text-blue-400" />
-                  <span className="truncate max-w-[80px]">{profile.fullName.split(' ')[0]}</span>
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Exit</span>
                 </button>
               ) : (
                 <button
@@ -83,10 +86,15 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Active Portal Badge, User Profile & Actions (Zero Cross-Dashboard Tabs) */}
+          {/* Active Portal Badge, Realtime Status, User Profile & Actions */}
           <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto pb-1 md:pb-0">
+            {/* Supabase Realtime WebSocket Status */}
+            <div className="hidden sm:block">
+              <RealtimeStatusBadge />
+            </div>
+
             {/* Isolated Portal Indicator */}
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
               <span className={`w-2 h-2 rounded-full animate-pulse ${isCoordinator ? 'bg-emerald-400' : 'bg-blue-400'}`} />
               <span className="text-slate-400 font-medium">Isolated View:</span>
               <span className={`font-semibold ${isCoordinator ? 'text-emerald-300' : 'text-blue-300'}`}>
@@ -124,15 +132,17 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                   </div>
 
-                  <button
-                    id="btn-switch-account"
-                    onClick={() => setIsAuthModalOpen(true)}
-                    title="Switch Portal / Profile"
-                    className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 text-[11px]"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="hidden xl:inline text-xs">Switch</span>
-                  </button>
+                  {isCoordinator && (
+                    <button
+                      id="btn-switch-account"
+                      onClick={() => setIsAuthModalOpen(true)}
+                      title="Switch Portal / Profile"
+                      className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 text-[11px]"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="hidden xl:inline text-xs">Switch</span>
+                    </button>
+                  )}
 
                   <button
                     id="btn-header-signout"

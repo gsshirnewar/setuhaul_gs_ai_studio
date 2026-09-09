@@ -42,5 +42,19 @@
     "registered_at": "2026-09-05T10:01:19.010Z",
     "approved_by": "Vikram Joshi",
     "approved_at": "2026-09-05T10:01:29.423Z"
+  },
+  {
+    "driver_id": "DRV-02011",
+    "carrier_id": "CAR001",
+    "driver_name": "Arjun Deshmukh",
+    "email": "arjun.deshmukh@gmail.com",
+    "password": "Password#123",
+    "phone": "+91 98220 99887",
+    "licence_number": "DL-DRV-02011",
+    "home_base_city": "Jaipur",
+    "driver_status": "OFF_DUTY",
+    "approval_status": "PENDING",
+    "vehicle_registration": "MH12AB9988",
+    "registered_at": "2026-09-05T18:05:02.011Z"
   }
 ]

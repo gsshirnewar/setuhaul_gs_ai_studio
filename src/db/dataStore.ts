@@ -38,6 +38,11 @@ import {
   INITIAL_CHAT_THREADS,
   INITIAL_CHAT_MESSAGES,
 } from './seedData';
+import {
+  normalizePhoneForComparison,
+  normalizeTruckRegForComparison,
+  normalizeEmailForComparison,
+} from '../utils/sanitaryValidation';
 
 class DataStore {
   coordinators: Coordinator[] = [];
@@ -948,6 +953,126 @@ class DataStore {
     };
   }
 
+  // Uniqueness & Duplicate Detection Methods
+  findDriverByPhone(phone: string, excludeDriverId?: string): Driver | undefined {
+    const target = normalizePhoneForComparison(phone);
+    if (!target) return undefined;
+    return this.drivers.find(d => {
+      if (excludeDriverId && d.driver_id === excludeDriverId) return false;
+      return normalizePhoneForComparison(d.phone) === target;
+    });
+  }
+
+  findDriverOrVehicleByRegistration(
+    reg: string,
+    excludeDriverId?: string
+  ): { driver?: Driver; vehicle?: Vehicle; matchedRegistration: string } | undefined {
+    const target = normalizeTruckRegForComparison(reg);
+    if (!target) return undefined;
+
+    // Check drivers
+    const matchedDriver = this.drivers.find(d => {
+      if (excludeDriverId && d.driver_id === excludeDriverId) return false;
+      return normalizeTruckRegForComparison(d.vehicle_registration) === target;
+    });
+
+    // Check vehicles
+    const matchedVehicle = this.vehicles.find(v => {
+      if (excludeDriverId && v.vehicle_id === `VEH-${excludeDriverId}`) return false;
+      return normalizeTruckRegForComparison(v.registration_number) === target;
+    });
+
+    if (matchedDriver || matchedVehicle) {
+      return {
+        driver: matchedDriver,
+        vehicle: matchedVehicle,
+        matchedRegistration: matchedDriver?.vehicle_registration || matchedVehicle?.registration_number || target,
+      };
+    }
+
+    return undefined;
+  }
+
+  validateDriverRegistrationUniqueness(params: {
+    phone?: string;
+    vehicle_registration?: string;
+    email?: string;
+    driver_id?: string;
+  }): {
+    isValid: boolean;
+    error?: string;
+    conflictField?: 'phone' | 'vehicle_registration' | 'email';
+    conflictingEntity?: any;
+    details: {
+      phoneAvailable: boolean;
+      vehicleAvailable: boolean;
+      emailAvailable: boolean;
+    };
+  } {
+    const details = {
+      phoneAvailable: true,
+      vehicleAvailable: true,
+      emailAvailable: true,
+    };
+
+    // 1. Phone check
+    if (params.phone) {
+      const conflictingPhoneDriver = this.findDriverByPhone(params.phone, params.driver_id);
+      if (conflictingPhoneDriver) {
+        details.phoneAvailable = false;
+        return {
+          isValid: false,
+          error: `Phone number (${params.phone}) is already registered in the system (assigned to driver "${conflictingPhoneDriver.driver_name}" - ${conflictingPhoneDriver.driver_id}). Phone numbers must be unique.`,
+          conflictField: 'phone',
+          conflictingEntity: conflictingPhoneDriver,
+          details,
+        };
+      }
+    }
+
+    // 2. Vehicle registration check
+    if (params.vehicle_registration) {
+      const conflictingVehicle = this.findDriverOrVehicleByRegistration(params.vehicle_registration, params.driver_id);
+      if (conflictingVehicle) {
+        details.vehicleAvailable = false;
+        const ownerDesc = conflictingVehicle.driver
+          ? `driver "${conflictingVehicle.driver.driver_name}" (${conflictingVehicle.driver.driver_id})`
+          : `fleet vehicle ${conflictingVehicle.vehicle?.vehicle_id || 'in fleet database'}`;
+        return {
+          isValid: false,
+          error: `Truck registration number (${params.vehicle_registration.toUpperCase()}) is already registered in the system (assigned to ${ownerDesc}). Truck registration numbers must be unique.`,
+          conflictField: 'vehicle_registration',
+          conflictingEntity: conflictingVehicle.driver || conflictingVehicle.vehicle,
+          details,
+        };
+      }
+    }
+
+    // 3. Email check
+    if (params.email) {
+      const normalizedEmail = normalizeEmailForComparison(params.email);
+      const conflictingEmailDriver = this.drivers.find(d => {
+        if (params.driver_id && d.driver_id === params.driver_id) return false;
+        return normalizeEmailForComparison(d.email) === normalizedEmail;
+      });
+      if (conflictingEmailDriver) {
+        details.emailAvailable = false;
+        return {
+          isValid: false,
+          error: `Email address (${params.email}) is already registered in the system (assigned to driver "${conflictingEmailDriver.driver_name}" - ${conflictingEmailDriver.driver_id}). Email addresses must be unique.`,
+          conflictField: 'email',
+          conflictingEntity: conflictingEmailDriver,
+          details,
+        };
+      }
+    }
+
+    return {
+      isValid: true,
+      details,
+    };
+  }
+
   // Driver Registration & Coordinator Approval Workflow
   registerDriver(data: {
     driver_id?: string;
@@ -961,6 +1086,22 @@ class DataStore {
   }): { status: 'success' | 'updated'; driver: Driver } {
     const normalizedEmail = data.email.trim().toLowerCase();
     const existing = this.getDriverByEmail(normalizedEmail) || (data.driver_id ? this.getDriver(data.driver_id) : undefined);
+
+    // Enforce uniqueness check against all other drivers and vehicles
+    const uniqueness = this.validateDriverRegistrationUniqueness({
+      phone: data.phone,
+      vehicle_registration: data.vehicle_registration,
+      email: data.email,
+      driver_id: existing?.driver_id || data.driver_id,
+    });
+
+    if (!uniqueness.isValid) {
+      const err: any = new Error(uniqueness.error);
+      err.conflictField = uniqueness.conflictField;
+      err.statusCode = 409;
+      throw err;
+    }
+
     const now = new Date().toISOString();
 
     if (existing) {
@@ -987,6 +1128,7 @@ class DataStore {
       licence_number: data.licence_number || `DL-${driverId}`,
       home_base_city: data.home_base_city || 'Jaipur',
       driver_status: 'OFF_DUTY',
+      verification_status: 'PENDING',
       approval_status: 'PENDING',
       vehicle_registration: vehicleReg,
       registered_at: now,
@@ -1026,9 +1168,12 @@ class DataStore {
     const now = new Date().toISOString();
 
     driver.approval_status = 'APPROVED';
+    driver.verification_status = 'VERIFIED';
     driver.driver_status = 'ACTIVE';
     driver.approved_by = coordinator?.name || coordinatorId;
     driver.approved_at = now;
+    driver.verified_by = coordinator?.name || coordinatorId;
+    driver.verified_at = now;
 
     // Ensure driver has an active shipment assigned so operational features are immediately ready
     const activeShipments = this.getDriverActiveShipments(driverId);
@@ -1102,9 +1247,12 @@ class DataStore {
     const now = new Date().toISOString();
 
     driver.approval_status = 'REJECTED';
+    driver.verification_status = 'REJECTED';
     driver.driver_status = 'INACTIVE';
     driver.approved_by = coordinator?.name || coordinatorId;
     driver.approved_at = now;
+    driver.verified_by = coordinator?.name || coordinatorId;
+    driver.verified_at = now;
     driver.rejection_reason = reason;
 
     // Append rejection notice into driver chat

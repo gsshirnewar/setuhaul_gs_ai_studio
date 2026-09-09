@@ -24,7 +24,6 @@ import {
   ShieldCheck,
   Clock,
   MapPin,
-  CornerDownLeft,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { getSupabaseConfig } from '../lib/supabaseClient';
@@ -34,6 +33,9 @@ import {
   validateTruckRegistration,
   validateEmail,
   validateFullName,
+  normalizePhoneForComparison,
+  normalizeTruckRegForComparison,
+  normalizeEmailForComparison,
 } from '../utils/sanitaryValidation';
 
 export const LoginScreen: React.FC = () => {
@@ -166,14 +168,25 @@ export const LoginScreen: React.FC = () => {
       setPhoneError(res.error);
       setPhoneValid(false);
       return false;
-    } else {
-      setPhoneError(null);
-      setPhoneValid(true);
-      if (res.formatted) {
-        setPhone(res.formatted);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizePhoneForComparison(res.cleaned || val);
+      const conflict = liveDrivers.find(d => normalizePhoneForComparison(d.phone) === normalizedInput);
+      if (conflict) {
+        setPhoneError(`This phone number is already registered (assigned to driver ${conflict.driver_name} - ${conflict.driver_id}). Phone numbers must be unique.`);
+        setPhoneValid(false);
+        return false;
+      }
+    }
+
+    setPhoneError(null);
+    setPhoneValid(true);
+    if (res.formatted) {
+      setPhone(res.formatted);
+    }
+    return true;
   };
 
   const validateVehicleRegField = (val: string = vehicleReg): boolean => {
@@ -182,14 +195,27 @@ export const LoginScreen: React.FC = () => {
       setVehicleRegError(res.error);
       setVehicleRegValid(false);
       return false;
-    } else {
-      setVehicleRegError(null);
-      setVehicleRegValid(true);
-      if (res.cleaned) {
-        setVehicleReg(res.cleaned);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers and vehicles
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizeTruckRegForComparison(res.cleaned || val);
+      const conflictDriver = liveDrivers.find(d => normalizeTruckRegForComparison(d.vehicle_registration) === normalizedInput);
+      const conflictVehicle = INITIAL_VEHICLES.find(v => normalizeTruckRegForComparison(v.registration_number) === normalizedInput);
+      if (conflictDriver || conflictVehicle) {
+        const ownerName = conflictDriver ? `driver "${conflictDriver.driver_name}" (${conflictDriver.driver_id})` : `fleet vehicle (${conflictVehicle?.vehicle_id})`;
+        setVehicleRegError(`Truck plate (${res.cleaned || val}) is already registered in system (assigned to ${ownerName}). Truck plates must be unique.`);
+        setVehicleRegValid(false);
+        return false;
+      }
+    }
+
+    setVehicleRegError(null);
+    setVehicleRegValid(true);
+    if (res.cleaned) {
+      setVehicleReg(res.cleaned);
+    }
+    return true;
   };
 
   const validateEmailField = (val: string = email): boolean => {
@@ -198,14 +224,25 @@ export const LoginScreen: React.FC = () => {
       setEmailError(res.error);
       setEmailValid(false);
       return false;
-    } else {
-      setEmailError(null);
-      setEmailValid(true);
-      if (res.cleaned) {
-        setEmail(res.cleaned);
-      }
-      return true;
     }
+
+    // Check uniqueness against database drivers
+    if (mode === 'signup' && role === 'driver') {
+      const normalizedInput = normalizeEmailForComparison(res.cleaned || val);
+      const conflict = liveDrivers.find(d => normalizeEmailForComparison(d.email) === normalizedInput);
+      if (conflict) {
+        setEmailError(`Email (${res.cleaned || val}) is already registered to driver ${conflict.driver_name} (${conflict.driver_id}). Email addresses must be unique.`);
+        setEmailValid(false);
+        return false;
+      }
+    }
+
+    setEmailError(null);
+    setEmailValid(true);
+    if (res.cleaned) {
+      setEmail(res.cleaned);
+    }
+    return true;
   };
 
   const validateFullNameField = (val: string = fullName): boolean => {
@@ -615,13 +652,7 @@ export const LoginScreen: React.FC = () => {
               <>
                 {/* Full Name */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700">Full Name</label>
-                    <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                      <CornerDownLeft className="w-3 h-3 text-slate-400" />
-                      <span>Press [Enter] to check</span>
-                    </span>
-                  </div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
                   <div className="relative">
                     <User className="w-4 h-4 text-blue-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
@@ -654,157 +685,114 @@ export const LoginScreen: React.FC = () => {
                       <AlertCircle className="w-4 h-4 text-rose-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     )}
                   </div>
-                  {fullNameError ? (
+                  {fullNameError && (
                     <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
                       <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
                       <span>{fullNameError}</span>
                     </p>
-                  ) : fullNameValid ? (
-                    <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                      <span>Full name verified</span>
-                    </p>
-                  ) : null}
+                  )}
                 </div>
 
                 {role === 'driver' ? (
-                  <>
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
-                      <div className="font-semibold flex items-center gap-1.5 text-amber-900">
-                        <Clock className="w-4 h-4 text-amber-600" />
-                        <span>Coordinator Approval Workflow & Sanitary Checks</span>
-                      </div>
-                      <p className="text-[11px] text-amber-700 leading-relaxed">
-                        Driver profiles undergo sanitary validation for <strong>+91 10-digit mobile</strong>, standard <strong>Indian vehicle plate</strong>, and valid <strong>email (.com/.in)</strong>. Press <strong>[Enter]</strong> on any field to test validation.
-                      </p>
-                    </div>
-
-                    <div className="space-y-3.5">
-                      {/* Phone Number Field */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block text-xs font-bold text-slate-700">Phone Number (India)</label>
-                          <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                            <CornerDownLeft className="w-3 h-3 text-slate-400" />
-                            <span>Press [Enter] to check</span>
-                          </span>
-                        </div>
-                        <div className="relative flex rounded-xl shadow-2xs">
-                          <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-slate-700 text-xs font-bold select-none font-mono">
-                            🇮🇳 +91
-                          </span>
-                          <div className="relative flex-1">
-                            <input
-                              ref={phoneRef}
-                              type="tel"
-                              id="input-signup-phone"
-                              placeholder="98765 43210"
-                              value={phone.replace(/^\+91\s*/, '')}
-                              onChange={e => {
-                                let val = e.target.value;
-                                if (val.startsWith('+91')) {
-                                  val = val.slice(3).trim();
-                                }
-                                setPhone(val);
-                                if (phoneError) setPhoneError(null);
-                                setPhoneValid(false);
-                              }}
-                              onKeyDown={handlePhoneKeyDown}
-                              onBlur={() => {
-                                if (phone.trim()) validatePhoneField();
-                              }}
-                              className={`w-full bg-slate-50 border rounded-r-xl pr-9 py-2.5 pl-3 text-xs text-slate-900 font-mono font-medium placeholder-slate-400 focus:bg-white focus:outline-none transition-all ${
-                                phoneError
-                                  ? 'border-rose-400 bg-rose-50/40 focus:border-rose-600 focus:ring-2 focus:ring-rose-500/20'
-                                  : phoneValid
-                                  ? 'border-emerald-400 bg-emerald-50/30 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20'
-                                  : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20'
-                              }`}
-                            />
-                            {phoneValid && (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                            )}
-                            {phoneError && (
-                              <AlertCircle className="w-4 h-4 text-rose-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                            )}
-                          </div>
-                        </div>
-                        {phoneError ? (
-                          <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
-                            <span>{phoneError}</span>
-                          </p>
-                        ) : phoneValid ? (
-                          <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                            <span>Valid Indian 10-digit mobile (+91 {phone.replace(/\D/g, '').slice(-10)})</span>
-                          </p>
-                        ) : (
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            Enter 10 digits without letters (e.g. 9876543210). Indian format begins with 6, 7, 8, or 9.
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Truck Registration Number Field */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block text-xs font-bold text-slate-700">Truck Registration Plate</label>
-                          <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                            <CornerDownLeft className="w-3 h-3 text-slate-400" />
-                            <span>Press [Enter] to check</span>
-                          </span>
-                        </div>
-                        <div className="relative">
-                          <Truck className="w-4 h-4 text-cyan-600 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <div className="space-y-3.5">
+                    {/* Phone Number Field */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number (India)</label>
+                      <div className="relative flex rounded-xl shadow-2xs">
+                        <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-slate-700 text-xs font-bold select-none font-mono">
+                          🇮🇳 +91
+                        </span>
+                        <div className="relative flex-1">
                           <input
-                            ref={vehicleRegRef}
-                            type="text"
-                            required
-                            placeholder="RJ14GT4101"
-                            value={vehicleReg}
+                            ref={phoneRef}
+                            type="tel"
+                            id="input-signup-phone"
+                            placeholder="98765 43210"
+                            value={phone.replace(/^\+91\s*/, '')}
                             onChange={e => {
-                              setVehicleReg(e.target.value.toUpperCase());
-                              if (vehicleRegError) setVehicleRegError(null);
-                              setVehicleRegValid(false);
+                              let val = e.target.value;
+                              if (val.startsWith('+91')) {
+                                val = val.slice(3).trim();
+                              }
+                              setPhone(val);
+                              if (phoneError) setPhoneError(null);
+                              setPhoneValid(false);
                             }}
-                            onKeyDown={handleVehicleRegKeyDown}
+                            onKeyDown={handlePhoneKeyDown}
                             onBlur={() => {
-                              if (vehicleReg.trim()) validateVehicleRegField();
+                              if (phone.trim()) validatePhoneField();
                             }}
-                            className={`w-full bg-slate-50 border rounded-xl pl-9 pr-9 py-2.5 text-xs text-blue-800 font-mono font-bold placeholder-slate-400 focus:bg-white focus:outline-none transition-all uppercase ${
-                              vehicleRegError
+                            className={`w-full bg-slate-50 border rounded-r-xl pr-9 py-2.5 pl-3 text-xs text-slate-900 font-mono font-medium placeholder-slate-400 focus:bg-white focus:outline-none transition-all ${
+                              phoneError
                                 ? 'border-rose-400 bg-rose-50/40 focus:border-rose-600 focus:ring-2 focus:ring-rose-500/20'
-                                : vehicleRegValid
+                                : phoneValid
                                 ? 'border-emerald-400 bg-emerald-50/30 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20'
                                 : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20'
                             }`}
                           />
-                          {vehicleRegValid && (
+                          {phoneValid && (
                             <CheckCircle2 className="w-4 h-4 text-emerald-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                           )}
-                          {vehicleRegError && (
+                          {phoneError && (
                             <AlertCircle className="w-4 h-4 text-rose-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                           )}
                         </div>
-                        {vehicleRegError ? (
-                          <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
-                            <span>{vehicleRegError}</span>
-                          </p>
-                        ) : vehicleRegValid ? (
-                          <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                            <span>Valid Indian commercial registration ({vehicleReg})</span>
-                          </p>
-                        ) : (
-                          <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                            Indian plate pattern: State(2) + RTO(1-2) + Series(1-2) + No(4), e.g. RJ14GT4101 or MH12AB1234
-                          </p>
+                      </div>
+                      {phoneError ? (
+                        <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
+                          <span>{phoneError}</span>
+                        </p>
+                      ) : !phoneValid && !phone ? (
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Enter a valid 10-digit number
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {/* Truck Registration Number Field */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Truck Registration Plate</label>
+                      <div className="relative">
+                        <Truck className="w-4 h-4 text-cyan-600 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          ref={vehicleRegRef}
+                          type="text"
+                          required
+                          placeholder="RJ14GT4101"
+                          value={vehicleReg}
+                          onChange={e => {
+                            setVehicleReg(e.target.value.toUpperCase());
+                            if (vehicleRegError) setVehicleRegError(null);
+                            setVehicleRegValid(false);
+                          }}
+                          onKeyDown={handleVehicleRegKeyDown}
+                          onBlur={() => {
+                            if (vehicleReg.trim()) validateVehicleRegField();
+                          }}
+                          className={`w-full bg-slate-50 border rounded-xl pl-9 pr-9 py-2.5 text-xs text-blue-800 font-mono font-bold placeholder-slate-400 focus:bg-white focus:outline-none transition-all uppercase ${
+                            vehicleRegError
+                              ? 'border-rose-400 bg-rose-50/40 focus:border-rose-600 focus:ring-2 focus:ring-rose-500/20'
+                              : vehicleRegValid
+                              ? 'border-emerald-400 bg-emerald-50/30 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20'
+                              : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20'
+                          }`}
+                        />
+                        {vehicleRegValid && (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        )}
+                        {vehicleRegError && (
+                          <AlertCircle className="w-4 h-4 text-rose-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                         )}
                       </div>
+                      {vehicleRegError && (
+                        <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
+                          <span>{vehicleRegError}</span>
+                        </p>
+                      )}
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Hub Facility</label>
@@ -826,17 +814,9 @@ export const LoginScreen: React.FC = () => {
 
             {/* Email Field */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  {role === 'driver' ? 'Driver Email / Username' : 'Coordinator Work Email'}
-                </label>
-                {mode === 'signup' && (
-                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                    <CornerDownLeft className="w-3 h-3 text-slate-400" />
-                    <span>Press [Enter] to check</span>
-                  </span>
-                )}
-              </div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                {role === 'driver' ? 'Driver Email / Username' : 'Coordinator Work Email'}
+              </label>
               <div className="relative">
                 <Mail className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
                   role === 'driver' ? 'text-blue-500' : 'text-emerald-500'
@@ -874,28 +854,18 @@ export const LoginScreen: React.FC = () => {
                   <AlertCircle className="w-4 h-4 text-rose-600 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 )}
               </div>
-              {emailError ? (
+              {emailError && (
                 <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
                   <AlertCircle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
                   <span>{emailError}</span>
                 </p>
-              ) : emailValid && mode === 'signup' ? (
-                <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1.5 mt-1.5 animate-fade-in">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                  <span>Valid email address (.com / .in)</span>
-                </p>
-              ) : null}
+              )}
             </div>
 
             {/* Password Field */}
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="mb-1">
                 <label className="block text-xs font-bold text-slate-700">Password</label>
-                {mode === 'signin' && (
-                  <span className={`text-[11px] font-mono font-bold ${role === 'driver' ? 'text-blue-600' : 'text-emerald-600'}`}>
-                    {role === 'driver' ? 'e.g. Password#Drv01' : 'e.g. Password#Coord01'}
-                  </span>
-                )}
               </div>
               <div className="relative">
                 <Lock className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
